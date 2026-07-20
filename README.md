@@ -182,4 +182,35 @@ python -m uvicorn main:app --reload
 - API 문서: `http://127.0.0.1:8000/docs`
 - Health Check: `http://127.0.0.1:8000/health`
 
-현재 `NudgeService` 내부 통합과 출력 계약까지 구현되어 있습니다. AI-1의 실제 스트림과 프론트가 호출할 FastAPI Nudge 엔드포인트는 다음 연결 단계입니다.
+## MVP 세션 API 사용법
+
+현재는 사용자가 입력한 YouTube URL을 세션에 저장하고, `subtitle_name`으로 `pinkfong` 또는 `pororo` 예시 자막을 선택합니다.
+
+1. 서버 실행 후 `http://127.0.0.1:8000/docs`에 접속합니다.
+2. `POST /sessions`에서 `Try it out`을 누르고 다음 요청을 실행합니다.
+
+```json
+{
+  "youtube_url": "핑크퐁 YouTube URL",
+  "subtitle_name": "pinkfong",
+  "child_tier": "tier2"
+}
+```
+
+3. 응답의 `session_id`를 복사합니다.
+4. `POST /sessions/{session_id}/nudge`의 `session_id` 칸에 붙여 넣고 `ClsPayload`를 전송합니다.
+
+```json
+{
+  "cls_score": 0.8,
+  "intensity": "strong",
+  "gv": 0.1,
+  "fd": 5.0,
+  "br": 2,
+  "timestamp": 35
+}
+```
+
+`subtitle_name`은 현재 `pinkfong`과 `pororo`만 허용합니다. `none`과 `soft`는 Gemini를 호출하지 않습니다. `strong`은 `.env`의 `GEMINI_API_KEY`를 사용해 실제 질문을 생성합니다. 각 세션은 독립된 10초 Nudge 쿨다운을 가집니다. 서버를 재시작하면 MVP 메모리 세션은 사라집니다.
+
+현재 `NudgeService`, 출력 계약, FastAPI 세션/Nudge 엔드포인트까지 구현되어 있습니다. 실제 YouTube 자막 추출과 AI-1·프론트 실시간 연결은 다음 단계입니다.

@@ -31,3 +31,18 @@ class NudgeResponse(BaseModel):
 
     def to_frontend(self) -> dict[str, Any]:
         return self.model_dump(exclude_none=True)
+
+
+class SessionCreateRequest(BaseModel):
+    youtube_url: str = Field(min_length=1)
+    subtitle_name: Literal["pinkfong", "pororo"]
+    child_tier: Literal["tier1", "tier2", "tier3"]
+
+
+class SessionCreateResponse(BaseModel):
+    session_id: str
+    youtube_url: str
+    subtitle_name: Literal["pinkfong", "pororo"]
+    child_tier: Literal["tier1", "tier2", "tier3"]
+    caption_count: int
+    subtitle_source: str
