@@ -1,324 +1,185 @@
 # LumiNudge Backend
 
-LumiNudge의 FastAPI 백엔드와 AI 기반 Nudge 생성 모듈을 관리하는 저장소입니다.
+FastAPI 기반 LumiNudge 백엔드입니다. 현재 Nudge 파트는 영상 자막과 AI-1의 Attention 결과를 받아 개입 여부와 프론트 표시용 질문을 생성합니다.
 
-현재 백엔드는 영상별 자막 데이터를 제공하며, AI Nudge 모듈은 자막과 현재 영상 시간을 기반으로 영유아용 미션을 생성합니다.
-
-## 현재 구현 상태
-
-구현 완료:
-
-- FastAPI 서버
-- 영상별 mock 자막 조회
-- 자막 타임스탬프 기반 현재/이전 맥락 선택
-- Gemini 기반 티어별 미션 생성
-- T-5초 미션 사전 생성
-- 메모리 기반 Mission Queue
-- CLS 점수 기반 Nudge 판단
-- STT 결과 정규화
-- 키워드 기반 CSR 응답 평가
-
-아직 연결되지 않은 부분:
-
-- 프론트엔드와 AI Nudge API 연결
-- AI-1의 실제 CLS 결과 연결
-- 실제 자막 추출 파이프라인
-- 영구 저장소 기반 Mission Queue
-- 실제 프론트엔드 STT 입력 연결
-
-## 프로젝트 구조
+## 현재 Nudge 흐름
 
 ```text
-luminudge-backend/
-├─ main.py
-├─ requirements.txt
-├─ .env
-├─ mock_data/
-│  ├─ subtitle_pinkfong.json
-│  └─ subtitle_pororo.json
-├─ ai/
-│  ├─ __init__.py
-│  └─ nudge/
-│     ├─ __init__.py
-│     ├─ caption_slicer.py
-│     ├─ mission_generator.py
-│     ├─ mission_prompt.txt
-│     ├─ prefetch_queue.py
-│     ├─ nudge_trigger.py
-│     ├─ stt_adapter.py
-│     ├─ stt_csr.py
-│     └─ response_evaluator.py
-└─ tests/
-   ├─ ai/
-   │  └─ nudge/
-   └─ fixtures/
-      └─ nudge/
+mock_data/subtitle_pinkfong.json 한 번 로드
+                +
+AI-1에서 ClsPayload 연속 입력
+                ↓
+intensity와 10초 쿨다운 확인
+                ↓
+none   → 개입 없음
+soft   → 영상 유지 + 루미만 표시
+strong → timestamp 기준 자막 선택
+         → Gemini로 티어별 질문 생성
+         → 영상 일시정지 + 질문을 프론트에 반환
 ```
 
-## 개발 환경 설정
+`timestamp`는 YouTube 영상 재생 시간(초)이며 자막 선택에 사용합니다. 쿨다운은 영상 시간이 아니라 서버의 실제 경과 시간으로 계산합니다. 첫 Nudge는 기다리지 않고 실행하며, 실행 후 10초 동안 다음 Nudge를 보류합니다. 운영용 쿨다운은 추후 조정합니다.
 
-가상환경을 생성합니다.
+## AI-1 입력 형식
 
-```powershell
-python -m venv .venv
-```
-
-Windows PowerShell에서 가상환경을 활성화합니다.
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-의존성을 설치합니다.
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-백엔드 루트에 `.env` 파일을 만들고 Gemini API 키를 설정합니다.
-
-```env
-GEMINI_API_KEY=your_api_key
-```
-
-`.env`는 Git에 포함하지 않습니다.
-
-## 서버 실행
-
-```powershell
-uvicorn main:app --reload
-```
-
-기본 주소:
-
-```text
-http://localhost:8000
-```
-
-API 문서:
-
-```text
-http://localhost:8000/docs
-```
-
-Health Check:
-
-```http
-GET /health
-```
-
-## Mock 자막 데이터
-
-현재 데모에서는 자막을 다음 위치에 저장합니다.
-
-```text
-mock_data/subtitle_{video_name}.json
-```
-
-예:
-
-```text
-mock_data/subtitle_pinkfong.json
-mock_data/subtitle_pororo.json
-```
-
-파일명과 API 경로는 다음과 같이 연결됩니다.
-
-```http
-GET /subtitles/pinkfong
-GET /subtitles/pororo
-```
-
-새 영상을 추가할 때는 다음처럼 파일을 생성합니다.
-
-```text
-mock_data/subtitle_new_video.json
-```
-
-호출 경로:
-
-```http
-GET /subtitles/new_video
-```
-
-## 자막 입력 계약
-
-AI Nudge 모듈에 전달하는 자막은 JSON 배열이어야 합니다.
-
-```json
-[
-  {
-    "start": 0,
-    "end": 15,
-    "text": "해당 시간대의 장면 설명 또는 자막"
-  },
-  {
-    "start": 15,
-    "end": 28,
-    "text": "다음 시간대의 장면 설명 또는 자막"
-  }
-]
-```
-
-필드:
-
-- `start`: 자막 시작 시간, 초 단위
-- `end`: 자막 종료 시간, 초 단위
-- `text`: 해당 구간의 자막 또는 장면 설명
-
-현재 `mock_data`는 데모용 저장 방식입니다. AI Nudge 코드는 특정 파일명에 의존하지 않으며, 위 형식의 자막 배열이라면 API 요청이나 데이터베이스에서 전달받아도 처리할 수 있습니다.
-
-## AI Nudge 처리 흐름
-
-```text
-자막 배열 + 현재 영상 시간
-→ 현재 및 이전 자막 맥락 선택
-→ 5초 뒤 사용할 미션 사전 생성
-→ Gemini 티어별 미션 생성
-→ Mission Queue 저장
-→ CLS 조건 만족 시 Nudge Event 생성
-```
-
-주요 모듈:
-
-- `caption_slicer.py`: 현재 시간 기준 자막 맥락 선택
-- `mission_generator.py`: Gemini 기반 티어별 미션 생성
-- `prefetch_queue.py`: 5초 뒤 미션 사전 생성 및 큐 관리
-- `nudge_trigger.py`: CLS 기반 개입 판단
-- `stt_adapter.py`: STT payload 표준화
-- `stt_csr.py`: 키워드 기반 CSR 평가
-- `response_evaluator.py`: STT부터 CSR까지 통합 평가
-
-## Gemini 미션 출력
+`ai/attention/schemas.py`의 `ClsPayload`를 사용합니다.
 
 ```json
 {
-  "should_generate": true,
-  "context_source": "current",
-  "scene_summary": "현재 영상 장면 요약",
-  "keywords": ["핵심", "키워드"],
-  "missions": {
-    "tier1": {
-      "type": "gesture",
-      "prompt": "간단한 동작을 따라 해볼까?"
-    },
-    "tier2": {
-      "type": "choice",
-      "prompt": "화면에 나온 것은 무엇일까?",
-      "choices": ["선택 1", "선택 2"],
-      "answer": "선택 1"
-    },
-    "tier3": {
-      "type": "open_question",
-      "prompt": "화면에서 무엇을 보았어?",
-      "expected_keywords": ["예상", "키워드"]
-    }
+  "cls_score": 0.8,
+  "intensity": "strong",
+  "gv": 0.1,
+  "fd": 4.5,
+  "br": 3,
+  "timestamp": 35
+}
+```
+
+- `cls_score`: AI-1이 계산한 Cognitive Load Score (`0.0`~`1.0`)
+- `intensity`: AI-1의 최종 개입 강도 (`none`, `soft`, `strong`)
+- `gv`, `fd`, `br`: 판단 근거가 된 Attention 지표
+- `timestamp`: 현재 YouTube 재생 시간(초)
+
+AI-2는 `cls_score`로 강도를 다시 계산하지 않고 AI-1이 전달한 `intensity`에 따라 동작합니다. `cls_score`와 Attention 지표는 기록과 리포팅에 사용합니다.
+
+## 프론트 출력 형식
+
+출력 계약은 `ai/nudge/schemas.py`의 `NudgeResponse`입니다.
+
+### 개입 없음
+
+```json
+{
+  "should_nudge": false,
+  "intensity": "none",
+  "cls_score": 0.3,
+  "child_tier": "tier2",
+  "timestamp": 5.0,
+  "pause_video": false,
+  "source": "no_trigger",
+  "attention": {
+    "gv": 0.1,
+    "fd": 4.5,
+    "br": 3
   }
 }
 ```
 
-## AI-1 입력 계약
+### 약한 개입
 
-AI-1에서 집중 저하 또는 인지 부하 점수를 계산하면 AI Nudge 모듈은 다음 값을 받는 것을 가정합니다.
-
-```json
-{
-  "cls_score": 0.6,
-  "current_time": 22,
-  "child_age": 4,
-  "speech_available": false
-}
-```
-
-현재 CLS 기준:
-
-```text
-cls_score < 0.5
-→ 개입하지 않음
-
-0.5 <= cls_score < 0.7
-→ soft nudge
-
-cls_score >= 0.7
-→ strong nudge
-→ 영상 일시정지 가능
-```
-
-## 프론트엔드 전달 형식
-
-최종적으로 프론트엔드에 전달할 Nudge Event 형식은 다음을 기준으로 합니다.
+`soft`는 질문 없이 루미만 표시합니다.
 
 ```json
 {
   "should_nudge": true,
-  "trigger_strength": "soft",
+  "intensity": "soft",
   "cls_score": 0.6,
   "child_tier": "tier2",
-  "current_time": 22,
-  "mission_type": "choice",
-  "nudge_text": "방금 나온 동물은 누구일까요?",
+  "timestamp": 22.0,
   "pause_video": false,
-  "source": "mission_queue",
-  "context_source": "previous",
-  "scene_summary": "영상 장면 요약"
+  "source": "soft_lumi",
+  "attention": {
+    "gv": 0.1,
+    "fd": 4.5,
+    "br": 3
+  }
 }
 ```
 
-프론트엔드 처리 기준:
+### 강한 개입과 질문
+
+```json
+{
+  "should_nudge": true,
+  "intensity": "strong",
+  "cls_score": 0.8,
+  "child_tier": "tier2",
+  "timestamp": 35.0,
+  "pause_video": true,
+  "source": "mission_queue",
+  "question": {
+    "type": "choice",
+    "text": "방금 방의 온도를 바꾼 것은 무엇일까요?",
+    "choices": ["노란색 버튼", "파란색 공"]
+  },
+  "context_source": "current",
+  "scene_summary": "노란색 버튼을 누르자 방의 온도가 변하는 장면",
+  "attention": {
+    "gv": 0.1,
+    "fd": 4.5,
+    "br": 3
+  }
+}
+```
+
+프론트 처리 기준:
 
 - `should_nudge`: Nudge UI 표시 여부
-- `nudge_text`: 캐릭터 말풍선 또는 음성 출력
-- `mission_type`: 미션 UI 종류
 - `pause_video`: YouTube 영상 일시정지 여부
-- `trigger_strength`: 개입 강도
+- `question.type`: `gesture`, `choice`, `open_question` 등 미션 UI 종류
+- `question.text`: 화면에 표시할 질문
+- `question.choices`: 선택형 질문의 보기
+- `source`: `no_trigger`, `cooldown`, `soft_lumi`, `mission_queue`, `fallback`
 
-현재 AI Nudge용 FastAPI 엔드포인트와 프론트엔드 호출 코드는 아직 연결되지 않았습니다.
+Gemini가 생성한 정답이나 평가 기준은 프론트 응답에 노출하지 않습니다.
 
-## 테스트
+## 최종 Nudge 통합 테스트
 
-테스트는 백엔드 루트에서 `python -m` 방식으로 실행합니다.
-
-자막 맥락 선택:
-
-```powershell
-python -m tests.ai.nudge.test_caption_slicer
-```
-
-백엔드의 모든 mock 자막 형식 확인:
-
-```powershell
-python -m tests.ai.nudge.test_mock_subtitles
-```
-
-Mock 미션 사전 생성 및 Queue 확인:
-
-```powershell
-python -m tests.ai.nudge.test_prefetch_queue --multi
-```
-
-실제 Gemini 미션 생성:
-
-```powershell
-python -m tests.ai.nudge.test_mock_gemini
-```
-
-실제 mock 자막과 Gemini 및 Mission Queue 통합:
-
-```powershell
-python -m tests.ai.nudge.test_mock_prefetch
-```
-
-Gemini를 호출하는 테스트는 실제 API 사용량이 발생할 수 있습니다.
-
-## 현재 검증된 통합 흐름
-
-다음 흐름은 실제 `subtitle_pinkfong.json`과 Gemini API를 사용해 검증했습니다.
+현재 유지하는 Nudge 테스트는 다음 하나입니다.
 
 ```text
-mock_data/subtitle_pinkfong.json
-→ 현재 시간 기준 자막 맥락 선택
-→ Gemini 티어별 미션 생성
-→ Mission Queue 저장
+tests/ai/nudge/test_pinkfong_attention_flow.py
 ```
 
-FastAPI 엔드포인트와 프론트엔드 연결은 다음 통합 단계에서 진행합니다.
+실행:
+
+```powershell
+python -m tests.ai.nudge.test_pinkfong_attention_flow
+```
+
+검증 내용:
+
+1. `subtitle_pinkfong.json`을 실제로 로드
+2. `none → soft → strong` 형태의 연속 `ClsPayload` 입력
+3. soft에서 루미만 표시
+4. soft 이후 10초 이내 strong 요청을 쿨다운으로 차단
+5. 10초 경과 후 timestamp 35초의 핑크퐁 자막 선택
+6. Tier 2 선택형 질문 생성
+7. `NudgeResponse` 형식 검증 및 프론트 전달 JSON 출력
+
+테스트는 API 비용 없이 전체 흐름을 확인하기 위해 Gemini 응답만 가짜 함수로 대체합니다. 실제 실행에서는 같은 자막 맥락이 `mission_generator.py`의 Gemini 호출로 전달됩니다.
+
+성공 출력:
+
+```text
+PASS: pinkfong subtitles + continuous CLS + cooldown + question output
+```
+
+## 주요 파일
+
+```text
+main.py                                      FastAPI 애플리케이션
+mock_data/subtitle_pinkfong.json             테스트 영상 자막
+ai/attention/schemas.py                      AI-1 입력 스키마
+ai/nudge/caption_slicer.py                   timestamp 기준 자막 선택
+ai/nudge/mission_generator.py                Gemini 질문 생성
+ai/nudge/nudge_trigger.py                    intensity별 응답 생성
+ai/nudge/nudge_service.py                    Attention·쿨다운·자막·질문 통합
+ai/nudge/schemas.py                          프론트 출력 스키마
+tests/ai/nudge/test_pinkfong_attention_flow.py 최종 통합 테스트
+```
+
+## 설치 및 서버 실행
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m uvicorn main:app --reload
+```
+
+- 서버: `http://127.0.0.1:8000`
+- API 문서: `http://127.0.0.1:8000/docs`
+- Health Check: `http://127.0.0.1:8000/health`
+
+현재 `NudgeService` 내부 통합과 출력 계약까지 구현되어 있습니다. AI-1의 실제 스트림과 프론트가 호출할 FastAPI Nudge 엔드포인트는 다음 연결 단계입니다.
