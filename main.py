@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import json
 from pathlib import Path
 
+from ai.attention.router import router as attention_router  # 추가
+
 app = FastAPI(title="LumiNudge API")
 
 app.add_middleware(
@@ -12,6 +14,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(attention_router)  # 추가
 
 MOCK_DATA_DIR = Path(__file__).parent / "mock_data"
 
