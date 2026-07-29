@@ -8,7 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ai.attention.schemas import ClsPayload
 from ai.nudge.nudge_service import NudgeService
-from ai.nudge.schemas import NudgeResponse, SessionCreateRequest, SessionCreateResponse
+from ai.nudge.response_service import evaluate_mission_response
+from ai.nudge.schemas import (
+    MissionResponseRequest,
+    MissionResponseResult,
+    NudgeResponse,
+    SessionCreateRequest,
+    SessionCreateResponse,
+)
 
 from ai.attention.router import router as attention_router  # 추가
 
@@ -74,6 +81,7 @@ def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
         "child_tier": request.child_tier,
         "captions": captions,
         "nudge_service": NudgeService(cooldown_seconds=10),
+        "missions": {},
     }
 
     return SessionCreateResponse(
@@ -93,10 +101,42 @@ def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
 
     try:
-        return session["nudge_service"].process(
+        mission_id = uuid4().hex if payload.intensity == "strong" else None
+        response = session["nudge_service"].process(
             payload=payload,
             captions=session["captions"],
             child_tier=session["child_tier"],
+            mission_id=mission_id,
         )
+        created_mission = session["nudge_service"].take_created_mission()
+        if created_mission is not None:
+            session["missions"][created_mission["mission_id"]] = created_mission
+        return response
     except ValueError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post(
+    "/sessions/{session_id}/missions/{mission_id}/responses",
+    response_model=MissionResponseResult,
+)
+def submit_mission_response(
+    session_id: str,
+    mission_id: str,
+    request: MissionResponseRequest,
+) -> MissionResponseResult:
+    session = sessions.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+
+    mission = session["missions"].get(mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="미션을 찾을 수 없습니다")
+    if mission["answered"]:
+        raise HTTPException(status_code=409, detail="이미 답변한 미션입니다")
+
+    result = evaluate_mission_response(mission=mission, request=request)
+    mission["responses"].append(request.model_dump())
+    mission["result"] = result.model_dump()
+    mission["answered"] = True
+    return result

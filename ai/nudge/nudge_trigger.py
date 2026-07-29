@@ -52,6 +52,7 @@ def build_nudge_event(
     timestamp: float,
     mission_queue: MissionQueue,
     child_tier: str,
+    mission_id: str | None = None,
 ) -> Dict[str, Any]:
     base = {
         "intensity": intensity,
@@ -92,12 +93,15 @@ def build_nudge_event(
         }
 
     selected_mission = select_tier_mission(queued_mission.mission, child_tier)
+    question = _question_from_mission(selected_mission)
+    if mission_id is not None:
+        question["mission_id"] = mission_id
     return {
         **base,
         "should_nudge": True,
         "pause_video": True,
         "source": "mission_queue",
-        "question": _question_from_mission(selected_mission),
+        "question": question,
         "context_source": queued_mission.mission.get("context_source"),
         "scene_summary": queued_mission.mission.get("scene_summary"),
     }

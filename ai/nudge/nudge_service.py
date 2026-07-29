@@ -5,6 +5,7 @@ from ai.attention.schemas import ClsPayload
 from ai.nudge.caption_slicer import build_caption_context
 from ai.nudge.mission_generator import generate_mission
 from ai.nudge.nudge_trigger import build_nudge_event
+from ai.nudge.nudge_trigger import select_tier_mission
 from ai.nudge.prefetch_queue import MissionQueue, QueuedMission
 from ai.nudge.schemas import NudgeResponse
 
@@ -23,6 +24,13 @@ class NudgeService:
         self.cooldown_seconds = cooldown_seconds
         self._clock = clock
         self._last_nudge_at: Optional[float] = None
+        self._created_mission: Optional[Dict[str, Any]] = None
+
+    def take_created_mission(self) -> Optional[Dict[str, Any]]:
+        """Return and clear the mission created by the latest process call."""
+        mission = self._created_mission
+        self._created_mission = None
+        return mission
 
     def _cooldown_remaining(self) -> float:
         if self._last_nudge_at is None:
@@ -53,7 +61,9 @@ class NudgeService:
         captions: List[Dict[str, Any]],
         child_tier: str,
         generator: Optional[MissionGenerator] = None,
+        mission_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        self._created_mission = None
         metrics = {"gv": payload.gv, "fd": payload.fd, "br": payload.br}
 
         if payload.intensity == "none":
@@ -88,6 +98,23 @@ class NudgeService:
             context = build_caption_context(captions, payload.timestamp)
             mission_generator = generator or self._generate_mission
             mission = mission_generator(context, child_tier)
+            selected_mission = select_tier_mission(mission, child_tier)
+            if mission_id is not None:
+                self._created_mission = {
+                    "mission_id": mission_id,
+                    "type": selected_mission.get("type", "fallback"),
+                    "prompt": selected_mission.get(
+                        "prompt", "루미랑 같이 화면을 한 번 볼까요?"
+                    ),
+                    "choices": selected_mission.get("choices"),
+                    "answer": selected_mission.get("answer"),
+                    "expected_keywords": selected_mission.get("expected_keywords"),
+                    "context_source": mission.get("context_source"),
+                    "scene_summary": mission.get("scene_summary"),
+                    "video_timestamp": payload.timestamp,
+                    "answered": False,
+                    "responses": [],
+                }
             mission_queue.add(
                 QueuedMission(
                     trigger_time=payload.timestamp,
@@ -103,6 +130,7 @@ class NudgeService:
             timestamp=payload.timestamp,
             mission_queue=mission_queue,
             child_tier=child_tier,
+            mission_id=mission_id,
         )
         event["attention"] = metrics
         self._last_nudge_at = self._clock()

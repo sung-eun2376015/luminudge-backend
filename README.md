@@ -124,6 +124,59 @@ POST /sessions/{session_id}/nudge
 
 AI-2는 `cls_score`로 강도를 다시 계산하지 않고 AI-1의 `intensity`에 따라 동작합니다. 쿨다운은 백엔드가 실제 경과 시간으로 관리하고, `timestamp`는 자막 선택에 사용합니다.
 
+### 3. 미션 답변 전송
+
+strong Nudge 응답의 `question.mission_id`를 사용합니다.
+
+```http
+POST /sessions/{session_id}/missions/{mission_id}/responses
+```
+
+선택형 답변:
+
+```json
+{
+  "response_type": "choice",
+  "answer": "파란색",
+  "response_time_ms": 2800
+}
+```
+
+음성 답변:
+
+```json
+{
+  "response_type": "voice",
+  "transcript": "방이 파란색으로 변했어요",
+  "stt_source": "web_speech",
+  "confidence": 0.91,
+  "response_time_ms": 3400
+}
+```
+
+응답:
+
+```json
+{
+  "mission_id": "미션 ID",
+  "response_type": "voice",
+  "is_correct": true,
+  "csr_score": 1.0,
+  "plr_seconds": 3.4,
+  "reaction": "praise",
+  "feedback_text": "영상 내용을 정말 잘 기억했어!",
+  "resume_video": true,
+  "needs_retry": false,
+  "needs_whisper_fallback": false
+}
+```
+
+- `praise`: 답변 성공, 영상 재개
+- `hint`: 맥락 또는 정답이 부족하여 힌트 후 재시도
+- `retry`: 음성 인식 실패 또는 제스처 미완료로 재시도
+- 음성 답변은 현재 키워드 기반 임시 CSR을 사용합니다.
+- transcript가 비었거나 confidence가 `0.6` 미만이면 실제 Whisper 호출 대신 `needs_whisper_fallback: true`를 반환합니다.
+
 ## 프론트 응답 계약
 
 응답 형식은 `ai/nudge/schemas.py`의 `NudgeResponse`입니다.
