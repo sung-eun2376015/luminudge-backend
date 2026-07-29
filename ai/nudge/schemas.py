@@ -75,6 +75,7 @@ class MissionResponseResult(BaseModel):
     response_type: Literal["choice", "voice", "gesture"]
     is_correct: bool
     csr_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    csr_method: Literal["semantic_embedding", "keyword_fallback"] | None = None
     plr_seconds: float = Field(ge=0.0)
     reaction: Literal["praise", "hint", "retry"]
     feedback_text: str

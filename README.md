@@ -174,7 +174,9 @@ POST /sessions/{session_id}/missions/{mission_id}/responses
 - `praise`: 답변 성공, 영상 재개
 - `hint`: 맥락 또는 정답이 부족하여 힌트 후 재시도
 - `retry`: 음성 인식 실패 또는 제스처 미완료로 재시도
-- 음성 답변은 현재 키워드 기반 임시 CSR을 사용합니다.
+- 음성 답변은 `gemini-embedding-001` Sentence Embedding의 cosine similarity로 CSR을 계산합니다.
+- 임베딩 API가 실패하면 기존 키워드 포함 비율 방식으로 자동 fallback합니다.
+- 응답의 `csr_method`는 `semantic_embedding` 또는 `keyword_fallback`입니다.
 - transcript가 비었거나 confidence가 `0.6` 미만이면 실제 Whisper 호출 대신 `needs_whisper_fallback: true`를 반환합니다.
 
 ## 프론트 응답 계약

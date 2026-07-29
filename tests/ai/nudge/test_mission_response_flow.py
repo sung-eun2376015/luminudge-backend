@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from ai.nudge.semantic_csr import SemanticCSRResult
 from main import app
 from storage.memory import sessions
 
@@ -142,8 +143,42 @@ def test_wrong_choice_returns_hint() -> None:
     assert body["resume_video"] is False
 
 
+def test_voice_response_uses_semantic_csr() -> None:
+    sessions.clear()
+    session_id = create_session()
+    mission_id = create_strong_mission(session_id)
+
+    semantic_result = SemanticCSRResult(
+        csr_score=0.82,
+        method="semantic_embedding",
+        expected_text="파란색",
+    )
+    with patch(
+        "ai.nudge.response_service.calculate_semantic_csr",
+        return_value=semantic_result,
+    ):
+        response = client.post(
+            f"/sessions/{session_id}/missions/{mission_id}/responses",
+            json={
+                "response_type": "voice",
+                "transcript": "방이 파랗게 변했어요",
+                "stt_source": "web_speech",
+                "confidence": 0.9,
+                "response_time_ms": 3200,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["csr_score"] == 0.82
+    assert body["csr_method"] == "semantic_embedding"
+    assert body["reaction"] == "praise"
+    assert body["resume_video"] is True
+
+
 if __name__ == "__main__":
     test_choice_response_returns_praise_and_is_stored()
     test_voice_response_uses_csr_and_requests_whisper_fallback()
     test_wrong_choice_returns_hint()
+    test_voice_response_uses_semantic_csr()
     print("PASS: mission storage + choice/voice evaluation + reactions")

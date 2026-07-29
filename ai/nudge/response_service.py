@@ -1,6 +1,7 @@
 from typing import Any
 
 from ai.nudge.response_evaluator import evaluate_response_from_stt_payload
+from ai.nudge.semantic_csr import calculate_semantic_csr
 from ai.nudge.schemas import MissionResponseRequest, MissionResponseResult
 from ai.nudge.stt_csr import normalize_text
 
@@ -13,6 +14,7 @@ def _base_result(
     reaction: str,
     feedback_text: str,
     csr_score: float | None = None,
+    csr_method: str | None = None,
     needs_whisper_fallback: bool = False,
 ) -> MissionResponseResult:
     needs_retry = reaction != "praise"
@@ -21,6 +23,7 @@ def _base_result(
         response_type=request.response_type,
         is_correct=is_correct,
         csr_score=csr_score,
+        csr_method=csr_method,
         plr_seconds=round(request.response_time_ms / 1000, 3),
         reaction=reaction,
         feedback_text=feedback_text,
@@ -93,17 +96,25 @@ def evaluate_mission_response(
             request=request,
             is_correct=False,
             csr_score=csr_score,
+            csr_method="keyword_fallback",
             reaction="retry",
             feedback_text="목소리를 잘 듣지 못했어. 한 번 더 말해줄래?",
             needs_whisper_fallback=True,
         )
 
-    if evaluation["csr"]["is_contextual"]:
+    semantic_result = calculate_semantic_csr(
+        transcript=request.transcript or "",
+        mission=mission,
+    )
+    csr_score = semantic_result.csr_score
+
+    if csr_score >= 0.65:
         return _base_result(
             mission_id=mission_id,
             request=request,
             is_correct=True,
             csr_score=csr_score,
+            csr_method=semantic_result.method,
             reaction="praise",
             feedback_text="영상 내용을 정말 잘 기억했어!",
         )
@@ -113,6 +124,7 @@ def evaluate_mission_response(
         request=request,
         is_correct=False,
         csr_score=csr_score,
+        csr_method=semantic_result.method,
         reaction="hint",
         feedback_text="힌트를 듣고 한 번 더 말해볼까?",
     )
