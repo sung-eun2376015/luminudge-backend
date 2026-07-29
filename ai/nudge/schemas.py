@@ -82,3 +82,5 @@ class MissionResponseResult(BaseModel):
     resume_video: bool
     needs_retry: bool
     needs_whisper_fallback: bool = False
+    transcript: str | None = None
+    stt_source: Literal["web_speech", "whisper", "mock"] | None = None

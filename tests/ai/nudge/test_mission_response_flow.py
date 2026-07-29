@@ -119,6 +119,37 @@ def test_voice_response_uses_csr_and_requests_whisper_fallback() -> None:
     assert body["needs_whisper_fallback"] is True
     assert body["csr_score"] == 0.0
     assert body["resume_video"] is False
+    assert sessions[session_id]["missions"][mission_id]["answered"] is False
+
+    semantic_result = SemanticCSRResult(
+        csr_score=0.88,
+        method="semantic_embedding",
+        expected_text="파란색",
+    )
+    with (
+        patch(
+            "ai.nudge.router.transcribe_audio",
+            return_value="방이 파랗게 변했어요",
+        ),
+        patch(
+            "ai.nudge.response_service.calculate_semantic_csr",
+            return_value=semantic_result,
+        ),
+    ):
+        audio_response = client.post(
+            f"/sessions/{session_id}/missions/{mission_id}/responses/audio",
+            files={"audio": ("answer.webm", b"fake audio", "audio/webm")},
+            data={"response_time_ms": "2300", "language": "ko"},
+        )
+
+    assert audio_response.status_code == 200
+    audio_body = audio_response.json()
+    assert audio_body["transcript"] == "방이 파랗게 변했어요"
+    assert audio_body["stt_source"] == "whisper"
+    assert audio_body["csr_score"] == 0.88
+    assert audio_body["reaction"] == "praise"
+    assert sessions[session_id]["missions"][mission_id]["answered"] is True
+    assert len(sessions[session_id]["missions"][mission_id]["responses"]) == 2
 
 
 def test_wrong_choice_returns_hint() -> None:
@@ -141,6 +172,7 @@ def test_wrong_choice_returns_hint() -> None:
     assert body["reaction"] == "hint"
     assert body["needs_retry"] is True
     assert body["resume_video"] is False
+    assert sessions[session_id]["missions"][mission_id]["answered"] is False
 
 
 def test_voice_response_uses_semantic_csr() -> None:

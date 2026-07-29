@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from ai.attention.schemas import ClsPayload
 from ai.nudge.nudge_service import NudgeService
@@ -15,6 +15,7 @@ from ai.nudge.schemas import (
     SessionCreateRequest,
     SessionCreateResponse,
 )
+from ai.nudge.whisper_service import WhisperServiceError, transcribe_audio
 from storage.memory import get_mission, get_session, save_mission, save_session
 
 
@@ -40,6 +41,22 @@ def get_mock_subtitle_path(subtitle_name: str) -> Path:
     if file_path is None:
         raise HTTPException(status_code=404, detail="지원하지 않는 mock 자막입니다")
     return file_path
+
+
+def store_response_result(
+    mission: dict[str, Any],
+    request: MissionResponseRequest,
+    result: MissionResponseResult,
+) -> None:
+    mission["responses"].append(
+        {
+            "request": request.model_dump(),
+            "result": result.model_dump(),
+        }
+    )
+    mission["result"] = result.model_dump()
+    mission["answered"] = result.reaction == "praise"
+    mission["status"] = "completed" if mission["answered"] else "awaiting_retry"
 
 
 @router.get("/subtitles/{video_name}")
@@ -126,7 +143,53 @@ def submit_mission_response(
         raise HTTPException(status_code=409, detail="이미 답변한 미션입니다")
 
     result = evaluate_mission_response(mission=mission, request=request)
-    mission["responses"].append(request.model_dump())
-    mission["result"] = result.model_dump()
-    mission["answered"] = True
+    store_response_result(mission, request, result)
+    return result
+
+
+@router.post(
+    "/sessions/{session_id}/missions/{mission_id}/responses/audio",
+    response_model=MissionResponseResult,
+)
+async def submit_audio_mission_response(
+    session_id: str,
+    mission_id: str,
+    audio: UploadFile = File(...),
+    response_time_ms: int = Form(..., ge=0),
+    language: str = Form("ko"),
+) -> MissionResponseResult:
+    session = get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+
+    mission = get_mission(session_id, mission_id)
+    if mission is None:
+        raise HTTPException(status_code=404, detail="미션을 찾을 수 없습니다")
+    if mission["answered"]:
+        raise HTTPException(status_code=409, detail="이미 답변한 미션입니다")
+
+    audio_bytes = await audio.read()
+    try:
+        transcript = transcribe_audio(
+            filename=audio.filename or "response.webm",
+            content_type=audio.content_type or "application/octet-stream",
+            audio_bytes=audio_bytes,
+            language=language,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except WhisperServiceError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    finally:
+        await audio.close()
+
+    request = MissionResponseRequest(
+        response_type="voice",
+        transcript=transcript,
+        stt_source="whisper",
+        language=language,
+        response_time_ms=response_time_ms,
+    )
+    result = evaluate_mission_response(mission=mission, request=request)
+    store_response_result(mission, request, result)
     return result

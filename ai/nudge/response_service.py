@@ -30,6 +30,8 @@ def _base_result(
         resume_video=not needs_retry,
         needs_retry=needs_retry,
         needs_whisper_fallback=needs_whisper_fallback,
+        transcript=request.transcript if request.response_type == "voice" else None,
+        stt_source=request.stt_source if request.response_type == "voice" else None,
     )
 
 

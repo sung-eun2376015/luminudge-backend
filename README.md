@@ -179,6 +179,23 @@ POST /sessions/{session_id}/missions/{mission_id}/responses
 - 응답의 `csr_method`는 `semantic_embedding` 또는 `keyword_fallback`입니다.
 - transcript가 비었거나 confidence가 `0.6` 미만이면 실제 Whisper 호출 대신 `needs_whisper_fallback: true`를 반환합니다.
 
+Web Speech fallback 오디오:
+
+```http
+POST /sessions/{session_id}/missions/{mission_id}/responses/audio
+Content-Type: multipart/form-data
+```
+
+multipart 필드:
+
+```text
+audio              webm, wav, mp3, m4a 등 오디오 파일
+response_time_ms   답변 시간(ms)
+language           ko (기본값)
+```
+
+백엔드는 `gpt-4o-mini-transcribe`로 transcript를 만든 뒤 동일한 Semantic CSR 평가를 수행합니다. 앱 자체 업로드 제한은 10MB입니다. `hint`와 `retry`는 미션을 종료하지 않으며, `praise`가 반환될 때만 완료됩니다.
+
 ## 프론트 응답 계약
 
 응답 형식은 `ai/nudge/schemas.py`의 `NudgeResponse`입니다.
