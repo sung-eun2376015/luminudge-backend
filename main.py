@@ -10,6 +10,8 @@ from ai.attention.schemas import ClsPayload
 from ai.nudge.nudge_service import NudgeService
 from ai.nudge.schemas import NudgeResponse, SessionCreateRequest, SessionCreateResponse
 
+from ai.attention.router import router as attention_router  # 추가
+
 app = FastAPI(title="LumiNudge API")
 
 app.add_middleware(
@@ -19,6 +21,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(attention_router)  # 추가
 
 MOCK_DATA_DIR = Path(__file__).parent / "mock_data"
 MOCK_SUBTITLE_FILES = {
