@@ -27,8 +27,14 @@ strong → timestamp 기준 자막 선택
 - 세션별 개발용 10초 쿨다운
 - timestamp 기준 현재/이전 자막 맥락 선택
 - 실제 Gemini Tier별 질문 생성
+- strong 미션별 `mission_id` 발급 및 세션 메모리 저장
+- 선택형·제스처·Web Speech transcript 답변 평가
+- Gemini Sentence Embedding 기반 CSR 계산
+- Gemini 오디오 전사 fallback
+- `praise`, `hint`, `retry` 및 영상 재개 여부 반환
+- 답변 시도 이력 누적
 - 프론트 전달용 `NudgeResponse`
-- FastAPI 세션 및 Nudge API
+- FastAPI 세션·Nudge·답변 API
 
 아직 연결되지 않은 항목:
 
@@ -36,7 +42,7 @@ strong → timestamp 기준 자막 선택
 - AI-1의 실시간 `ClsPayload` 전송
 - 프론트의 루미 표시, 영상 정지 및 질문 UI
 - Redis/DB 기반 영구 세션 저장
-- 실제 응답 평가와 ARI/PLR/CSR 리포팅
+- ARI/PLR/CSR 영구 로깅 및 부모 리포트
 
 ## 설치 및 실행
 
@@ -124,9 +130,52 @@ POST /sessions/{session_id}/nudge
 
 AI-2는 `cls_score`로 강도를 다시 계산하지 않고 AI-1의 `intensity`에 따라 동작합니다. 쿨다운은 백엔드가 실제 경과 시간으로 관리하고, `timestamp`는 자막 선택에 사용합니다.
 
-### 3. 미션 답변 전송
+### 3. strong 미션 생성 및 저장
 
-strong Nudge 응답의 `question.mission_id`를 사용합니다.
+`POST /sessions/{session_id}/nudge`에 `intensity: "strong"`을 보내면 백엔드는 다음 작업을 수행합니다.
+
+```text
+timestamp 주변 자막 선택
+→ Gemini 티어별 질문 생성
+→ mission_id 발급
+→ 정답·expected_keywords를 세션 메모리에 저장
+→ 정답을 제외한 질문만 프론트에 반환
+```
+
+strong 응답 예시:
+
+```json
+{
+  "should_nudge": true,
+  "intensity": "strong",
+  "cls_score": 0.8,
+  "child_tier": "tier2",
+  "timestamp": 35,
+  "pause_video": true,
+  "source": "mission_queue",
+  "question": {
+    "mission_id": "22f0ceea9dea484db45b04ae4d6be1c7",
+    "type": "choice",
+    "text": "방이 무슨 색으로 변했을까요?",
+    "choices": ["파란색", "노란색"]
+  },
+  "context_source": "current",
+  "scene_summary": "방이 파란색으로 변하는 장면",
+  "attention": {
+    "gv": 0.1,
+    "fd": 5.0,
+    "br": 2
+  }
+}
+```
+
+프론트는 `question.mission_id`를 보관하고 이후 답변 API의 URL에 사용해야 합니다.
+
+현재 저장 위치는 `storage/memory.py`의 메모리 딕셔너리입니다. 서버가 재시작되면 세션·미션·답변 이력이 모두 사라집니다. 정답과 `expected_keywords`는 프론트 응답에 노출하지 않습니다.
+
+### 4. JSON 미션 답변 전송
+
+선택형, 제스처, Web Speech transcript는 다음 API로 보냅니다.
 
 ```http
 POST /sessions/{session_id}/missions/{mission_id}/responses
@@ -142,7 +191,7 @@ POST /sessions/{session_id}/missions/{mission_id}/responses
 }
 ```
 
-음성 답변:
+Web Speech 음성 답변:
 
 ```json
 {
@@ -154,32 +203,61 @@ POST /sessions/{session_id}/missions/{mission_id}/responses
 }
 ```
 
-응답:
+제스처 답변:
+
+```json
+{
+  "response_type": "gesture",
+  "completed": true,
+  "response_time_ms": 1800
+}
+```
+
+공통 응답 예시:
 
 ```json
 {
   "mission_id": "미션 ID",
   "response_type": "voice",
   "is_correct": true,
-  "csr_score": 1.0,
+  "csr_score": 0.923,
+  "csr_method": "semantic_embedding",
   "plr_seconds": 3.4,
   "reaction": "praise",
   "feedback_text": "영상 내용을 정말 잘 기억했어!",
   "resume_video": true,
   "needs_retry": false,
-  "needs_stt_fallback": false
+  "needs_stt_fallback": false,
+  "transcript": "방이 파란색으로 변했어요",
+  "stt_source": "web_speech"
 }
 ```
 
-- `praise`: 답변 성공, 영상 재개
-- `hint`: 맥락 또는 정답이 부족하여 힌트 후 재시도
-- `retry`: 음성 인식 실패 또는 제스처 미완료로 재시도
+판정 및 상태 규칙:
+
+| 상황 | reaction | 미션 상태 | 영상 |
+|---|---|---|---|
+| 선택형 정답 | `praise` | 완료 | 재개 |
+| 선택형 오답 | `hint` | 재답변 가능 | 정지 유지 |
+| 음성 CSR `0.65` 이상 | `praise` | 완료 | 재개 |
+| 음성 CSR `0.65` 미만 | `hint` | 재답변 가능 | 정지 유지 |
+| Web Speech 결과 없음/낮은 신뢰도 | `retry` | 오디오 fallback 가능 | 정지 유지 |
+| 제스처 완료 | `praise` | 완료 | 재개 |
+| 제스처 미완료 | `retry` | 재답변 가능 | 정지 유지 |
+
+- `praise`일 때만 `answered: true`, `status: completed`로 저장합니다.
+- `hint`와 `retry`는 `status: awaiting_retry`로 유지해 같은 미션에 다시 답할 수 있습니다.
+- 각 답변의 요청과 평가 결과는 미션의 `responses` 배열에 누적합니다.
+- 완료된 미션에 다시 답하면 `409`를 반환합니다.
+- `response_time_ms`는 프론트가 측정해 보내며 백엔드는 `plr_seconds`로 변환합니다.
 - 음성 답변은 `gemini-embedding-001` Sentence Embedding의 cosine similarity로 CSR을 계산합니다.
 - 임베딩 API가 실패하면 기존 키워드 포함 비율 방식으로 자동 fallback합니다.
 - 응답의 `csr_method`는 `semantic_embedding` 또는 `keyword_fallback`입니다.
 - transcript가 비었거나 confidence가 `0.6` 미만이면 `needs_stt_fallback: true`를 반환합니다.
 
-Web Speech fallback 오디오:
+### 5. Gemini 오디오 전사 fallback
+
+Web Speech가 transcript를 만들지 못했거나 confidence가 낮으면 프론트는 녹음 파일을 전송합니다.
 
 ```http
 POST /sessions/{session_id}/missions/{mission_id}/responses/audio
@@ -194,7 +272,67 @@ response_time_ms   답변 시간(ms)
 language           ko (기본값)
 ```
 
-백엔드는 `gemini-2.5-flash`에 오디오 전사를 요청한 뒤 동일한 Semantic CSR 평가를 수행합니다. 앱 자체 업로드 제한은 10MB입니다. `hint`와 `retry`는 미션을 종료하지 않으며, `praise`가 반환될 때만 완료됩니다.
+처리 흐름:
+
+```text
+오디오 파일 검증
+→ gemini-2.5-flash 오디오 전사
+→ transcript 생성
+→ gemini-embedding-001 Semantic CSR
+→ praise 또는 hint 반환
+```
+
+실제 검증된 응답:
+
+```json
+{
+  "mission_id": "22f0ceea9dea484db45b04ae4d6be1c7",
+  "response_type": "voice",
+  "is_correct": true,
+  "csr_score": 0.923,
+  "csr_method": "semantic_embedding",
+  "plr_seconds": 2.5,
+  "reaction": "praise",
+  "feedback_text": "영상 내용을 정말 잘 기억했어!",
+  "resume_video": true,
+  "needs_retry": false,
+  "needs_stt_fallback": false,
+  "transcript": "방이 파란색으로 변했어요",
+  "stt_source": "gemini_audio"
+}
+```
+
+- 허용 확장자: `flac`, `m4a`, `mp3`, `mp4`, `mpeg`, `mpga`, `ogg`, `wav`, `webm`
+- 앱 업로드 제한: 10MB
+- 오디오가 비었거나 형식이 잘못되면 `400`
+- Gemini 전사에 실패하면 `502`
+
+### 6. 프론트 음성 처리 흐름
+
+```text
+아이 답변
+   ↓
+Web Speech 성공?
+   ├─ YES
+   │   → /responses에 transcript JSON 전송
+   │   → Semantic CSR
+   │
+   └─ NO
+       → /responses에서 needs_stt_fallback: true 확인
+       → /responses/audio에 녹음 파일 전송
+       → Gemini 오디오 전사
+       → Semantic CSR
+```
+
+### 7. 공통 오류
+
+| 상태 코드 | 의미 |
+|---|---|
+| `400` | 잘못된 오디오 형식, 빈 파일, 10MB 초과 |
+| `404` | 세션 또는 미션을 찾을 수 없음 |
+| `409` | 이미 `praise`로 완료된 미션 |
+| `422` | 요청 필드 누락 또는 잘못된 데이터 형식 |
+| `502` | Gemini 미션 생성·전사 등 외부 AI 호출 실패 |
 
 ## 프론트 응답 계약
 
@@ -252,6 +390,7 @@ language           ko (기본값)
   "pause_video": true,
   "source": "mission_queue",
   "question": {
+    "mission_id": "22f0ceea9dea484db45b04ae4d6be1c7",
     "type": "choice",
     "text": "방이 무슨 색으로 변했을까요?",
     "choices": ["파란색", "노란색"]
