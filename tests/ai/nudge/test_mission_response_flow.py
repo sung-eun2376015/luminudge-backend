@@ -2,7 +2,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from main import app, sessions
+from main import app
+from storage.memory import sessions
 
 
 client = TestClient(app)

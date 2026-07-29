@@ -296,16 +296,20 @@ PASS: pinkfong subtitles + continuous CLS + cooldown + question output
 ## 주요 파일
 
 ```text
-main.py                                       FastAPI 및 세션 API
+main.py                                       FastAPI 앱 설정 및 router 등록
 mock_data/subtitle_pinkfong.json              핑크퐁 mock 자막
 mock_data/subtitle_pororo.json                뽀로로 mock 자막
 ai/attention/schemas.py                       AI-1 입력 스키마
+ai/nudge/router.py                            세션·Nudge·답변 HTTP API
 ai/nudge/caption_slicer.py                    timestamp 기반 자막 선택
 ai/nudge/mission_generator.py                 Gemini 질문 생성
 ai/nudge/nudge_trigger.py                     intensity별 응답 생성
 ai/nudge/nudge_service.py                     쿨다운·자막·질문 통합
+ai/nudge/response_service.py                  선택·음성·제스처 답변 평가
 ai/nudge/schemas.py                           API 요청 및 프론트 출력 스키마
+storage/memory.py                             MVP용 세션·미션 메모리 저장소
 tests/ai/nudge/test_pinkfong_attention_flow.py 자동 통합 테스트
+tests/ai/nudge/test_mission_response_flow.py   미션 저장·답변 API 통합 테스트
 ```
 
 ## 다음 연결 단계
