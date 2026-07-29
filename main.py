@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from pathlib import Path
+from typing import Literal
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Literal
-import json
-from pathlib import Path
+
+from ai.attention.router import router as attention_router
+from ai.nudge.router import router as nudge_router
+
 
 app = FastAPI(title="LumiNudge API")
 
@@ -15,21 +19,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MOCK_DATA_DIR = Path(__file__).parent / "mock_data"
+app.include_router(attention_router)
+app.include_router(nudge_router)
+
 DATA_DIR = Path(__file__).parent / "data"
 ONBOARDING_FILE = DATA_DIR / "onboarding_records.jsonl"
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str]:
     return {"status": "ok"}
-
-@app.get("/subtitles/{video_name}")
-def get_subtitles(video_name: str):
-    file_path = MOCK_DATA_DIR / f"subtitle_{video_name}.json"
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="자막 파일을 찾을 수 없습니다")
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 # 프론트(src/types/onboarding.ts)의 OnboardingRecord와 필드 맞춤.
