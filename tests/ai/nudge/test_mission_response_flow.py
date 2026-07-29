@@ -97,7 +97,7 @@ def test_choice_response_returns_praise_and_is_stored() -> None:
     assert duplicate.status_code == 409
 
 
-def test_voice_response_uses_csr_and_requests_whisper_fallback() -> None:
+def test_voice_response_uses_csr_and_requests_stt_fallback() -> None:
     sessions.clear()
     session_id = create_session()
     mission_id = create_strong_mission(session_id)
@@ -116,7 +116,7 @@ def test_voice_response_uses_csr_and_requests_whisper_fallback() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["reaction"] == "retry"
-    assert body["needs_whisper_fallback"] is True
+    assert body["needs_stt_fallback"] is True
     assert body["csr_score"] == 0.0
     assert body["resume_video"] is False
     assert sessions[session_id]["missions"][mission_id]["answered"] is False
@@ -145,7 +145,7 @@ def test_voice_response_uses_csr_and_requests_whisper_fallback() -> None:
     assert audio_response.status_code == 200
     audio_body = audio_response.json()
     assert audio_body["transcript"] == "방이 파랗게 변했어요"
-    assert audio_body["stt_source"] == "whisper"
+    assert audio_body["stt_source"] == "gemini_audio"
     assert audio_body["csr_score"] == 0.88
     assert audio_body["reaction"] == "praise"
     assert sessions[session_id]["missions"][mission_id]["answered"] is True
@@ -210,7 +210,7 @@ def test_voice_response_uses_semantic_csr() -> None:
 
 if __name__ == "__main__":
     test_choice_response_returns_praise_and_is_stored()
-    test_voice_response_uses_csr_and_requests_whisper_fallback()
+    test_voice_response_uses_csr_and_requests_stt_fallback()
     test_wrong_choice_returns_hint()
     test_voice_response_uses_semantic_csr()
     print("PASS: mission storage + choice/voice evaluation + reactions")

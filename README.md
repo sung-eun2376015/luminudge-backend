@@ -167,7 +167,7 @@ POST /sessions/{session_id}/missions/{mission_id}/responses
   "feedback_text": "영상 내용을 정말 잘 기억했어!",
   "resume_video": true,
   "needs_retry": false,
-  "needs_whisper_fallback": false
+  "needs_stt_fallback": false
 }
 ```
 
@@ -177,7 +177,7 @@ POST /sessions/{session_id}/missions/{mission_id}/responses
 - 음성 답변은 `gemini-embedding-001` Sentence Embedding의 cosine similarity로 CSR을 계산합니다.
 - 임베딩 API가 실패하면 기존 키워드 포함 비율 방식으로 자동 fallback합니다.
 - 응답의 `csr_method`는 `semantic_embedding` 또는 `keyword_fallback`입니다.
-- transcript가 비었거나 confidence가 `0.6` 미만이면 실제 Whisper 호출 대신 `needs_whisper_fallback: true`를 반환합니다.
+- transcript가 비었거나 confidence가 `0.6` 미만이면 `needs_stt_fallback: true`를 반환합니다.
 
 Web Speech fallback 오디오:
 
@@ -194,7 +194,7 @@ response_time_ms   답변 시간(ms)
 language           ko (기본값)
 ```
 
-백엔드는 `gpt-4o-mini-transcribe`로 transcript를 만든 뒤 동일한 Semantic CSR 평가를 수행합니다. 앱 자체 업로드 제한은 10MB입니다. `hint`와 `retry`는 미션을 종료하지 않으며, `praise`가 반환될 때만 완료됩니다.
+백엔드는 `gemini-2.5-flash`에 오디오 전사를 요청한 뒤 동일한 Semantic CSR 평가를 수행합니다. 앱 자체 업로드 제한은 10MB입니다. `hint`와 `retry`는 미션을 종료하지 않으며, `praise`가 반환될 때만 완료됩니다.
 
 ## 프론트 응답 계약
 
@@ -322,6 +322,7 @@ ai/attention/schemas.py                       AI-1 입력 스키마
 ai/nudge/router.py                            세션·Nudge·답변 HTTP API
 ai/nudge/caption_slicer.py                    timestamp 기반 자막 선택
 ai/nudge/mission_generator.py                 Gemini 질문 생성
+ai/nudge/audio_transcription_service.py       Gemini 오디오 전사
 ai/nudge/nudge_trigger.py                     intensity별 응답 생성
 ai/nudge/nudge_service.py                     쿨다운·자막·질문 통합
 ai/nudge/response_service.py                  선택·음성·제스처 답변 평가
@@ -329,6 +330,7 @@ ai/nudge/schemas.py                           API 요청 및 프론트 출력 �
 storage/memory.py                             MVP용 세션·미션 메모리 저장소
 tests/ai/nudge/test_pinkfong_attention_flow.py 자동 통합 테스트
 tests/ai/nudge/test_mission_response_flow.py   미션 저장·답변 API 통합 테스트
+tests/ai/nudge/test_audio_transcription_service.py Gemini 오디오 전사 테스트
 ```
 
 ## 다음 연결 단계

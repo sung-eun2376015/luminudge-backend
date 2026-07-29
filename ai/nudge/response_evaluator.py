@@ -6,7 +6,7 @@ from typing import Any
 
 from ai.nudge.stt_adapter import (
     build_stt_result_from_payload,
-    should_use_whisper_fallback,
+    should_use_stt_fallback,
 )
 from ai.nudge.stt_csr import build_csr_event
 
@@ -22,12 +22,12 @@ def evaluate_response_from_stt_payload(
     흐름:
     STT payload
     → STTResult 변환
-    → Whisper fallback 필요 여부 판단
+    → 서버 STT fallback 필요 여부 판단
     → CSR 계산
     → response_evaluation event 반환
     """
     stt_result = build_stt_result_from_payload(stt_payload)
-    needs_whisper_fallback = should_use_whisper_fallback(stt_result)
+    needs_stt_fallback = should_use_stt_fallback(stt_result)
 
     csr_event = build_csr_event(
         stt_result=stt_result,
@@ -37,7 +37,7 @@ def evaluate_response_from_stt_payload(
 
     return {
         "event_type": "response_evaluation",
-        "needs_whisper_fallback": needs_whisper_fallback,
+        "needs_stt_fallback": needs_stt_fallback,
         "stt": {
             "transcript": stt_result.transcript,
             "source": stt_result.source,

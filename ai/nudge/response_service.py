@@ -15,7 +15,7 @@ def _base_result(
     feedback_text: str,
     csr_score: float | None = None,
     csr_method: str | None = None,
-    needs_whisper_fallback: bool = False,
+    needs_stt_fallback: bool = False,
 ) -> MissionResponseResult:
     needs_retry = reaction != "praise"
     return MissionResponseResult(
@@ -29,7 +29,7 @@ def _base_result(
         feedback_text=feedback_text,
         resume_video=not needs_retry,
         needs_retry=needs_retry,
-        needs_whisper_fallback=needs_whisper_fallback,
+        needs_stt_fallback=needs_stt_fallback,
         transcript=request.transcript if request.response_type == "voice" else None,
         stt_source=request.stt_source if request.response_type == "voice" else None,
     )
@@ -90,7 +90,7 @@ def evaluate_mission_response(
         mission=mission,
     )
     csr_score = float(evaluation["csr"]["csr_score"])
-    needs_fallback = bool(evaluation["needs_whisper_fallback"])
+    needs_fallback = bool(evaluation["needs_stt_fallback"])
 
     if needs_fallback:
         return _base_result(
@@ -101,7 +101,7 @@ def evaluate_mission_response(
             csr_method="keyword_fallback",
             reaction="retry",
             feedback_text="목소리를 잘 듣지 못했어. 한 번 더 말해줄래?",
-            needs_whisper_fallback=True,
+            needs_stt_fallback=True,
         )
 
     semantic_result = calculate_semantic_csr(

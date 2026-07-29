@@ -53,7 +53,7 @@ class MissionResponseRequest(BaseModel):
     response_type: Literal["choice", "voice", "gesture"]
     answer: str | None = None
     transcript: str | None = None
-    stt_source: Literal["web_speech", "whisper", "mock"] = "web_speech"
+    stt_source: Literal["web_speech", "gemini_audio", "whisper", "mock"] = "web_speech"
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     language: str = "ko-KR"
     completed: bool | None = None
@@ -81,6 +81,6 @@ class MissionResponseResult(BaseModel):
     feedback_text: str
     resume_video: bool
     needs_retry: bool
-    needs_whisper_fallback: bool = False
+    needs_stt_fallback: bool = False
     transcript: str | None = None
-    stt_source: Literal["web_speech", "whisper", "mock"] | None = None
+    stt_source: Literal["web_speech", "gemini_audio", "whisper", "mock"] | None = None

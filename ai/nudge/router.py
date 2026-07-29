@@ -15,7 +15,10 @@ from ai.nudge.schemas import (
     SessionCreateRequest,
     SessionCreateResponse,
 )
-from ai.nudge.whisper_service import WhisperServiceError, transcribe_audio
+from ai.nudge.audio_transcription_service import (
+    AudioTranscriptionError,
+    transcribe_audio,
+)
 from storage.memory import get_mission, get_session, save_mission, save_session
 
 
@@ -178,7 +181,7 @@ async def submit_audio_mission_response(
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    except WhisperServiceError as error:
+    except AudioTranscriptionError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     finally:
         await audio.close()
@@ -186,7 +189,7 @@ async def submit_audio_mission_response(
     request = MissionResponseRequest(
         response_type="voice",
         transcript=transcript,
-        stt_source="whisper",
+        stt_source="gemini_audio",
         language=language,
         response_time_ms=response_time_ms,
     )

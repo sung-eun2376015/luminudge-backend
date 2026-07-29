@@ -7,12 +7,12 @@ from typing import Any
 from ai.nudge.stt_csr import STTResult
 
 
-SUPPORTED_STT_SOURCES = {"web_speech", "whisper", "mock"}
+SUPPORTED_STT_SOURCES = {"web_speech", "gemini_audio", "whisper", "mock"}
 
 
 def build_stt_result_from_payload(payload: dict[str, Any]) -> STTResult:
     """
-    프론트엔드 Web Speech API 또는 백엔드 Whisper fallback 결과를
+    프론트엔드 Web Speech API 또는 백엔드 Gemini 오디오 전사 결과를
     AI-2 내부 표준 STTResult 구조로 변환한다.
     """
     transcript = str(payload.get("transcript", "")).strip()
@@ -54,12 +54,12 @@ def build_mock_stt_payload(
     }
 
 
-def should_use_whisper_fallback(stt_result: STTResult, min_confidence: float = 0.6) -> bool:
+def should_use_stt_fallback(stt_result: STTResult, min_confidence: float = 0.6) -> bool:
     """
     Web Speech API 결과가 비어 있거나 confidence가 낮으면
-    Whisper fallback을 사용할지 판단한다.
+    서버 오디오 전사 fallback을 사용할지 판단한다.
 
-    실제 Whisper 호출은 백엔드에서 붙이고,
+    실제 Gemini 오디오 전사는 백엔드에서 붙이고,
     여기서는 fallback 필요 여부만 판단한다.
     """
     if not stt_result.transcript:
@@ -69,3 +69,11 @@ def should_use_whisper_fallback(stt_result: STTResult, min_confidence: float = 0
         return True
 
     return False
+
+
+def should_use_whisper_fallback(
+    stt_result: STTResult,
+    min_confidence: float = 0.6,
+) -> bool:
+    """Backward-compatible alias for the provider-neutral fallback check."""
+    return should_use_stt_fallback(stt_result, min_confidence)
