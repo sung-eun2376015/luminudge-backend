@@ -1,14 +1,14 @@
 import os
 from typing import Literal, Optional
 
-import json
-from pathlib import Path
-
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Field, SQLModel, Session, create_engine
+
+from ai.attention.router import router as attention_router
+from ai.nudge.router import router as nudge_router
 
 load_dotenv()
 
@@ -22,7 +22,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MOCK_DATA_DIR = Path(__file__).parent / "mock_data"
+app.include_router(attention_router)
+app.include_router(nudge_router)
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(DATABASE_URL)
@@ -34,16 +35,8 @@ def on_startup():
 
 
 @app.get("/health")
-def health():
+def health() -> dict[str, str]:
     return {"status": "ok"}
-
-@app.get("/subtitles/{video_name}")
-def get_subtitles(video_name: str):
-    file_path = MOCK_DATA_DIR / f"subtitle_{video_name}.json"
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="자막 파일을 찾을 수 없습니다")
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 # 프론트(src/types/onboarding.ts)의 OnboardingRecord와 필드 맞춤.
