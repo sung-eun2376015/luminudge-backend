@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from ai.attention.schemas import ClsPayload
 from ai.nudge.nudge_service import NudgeService
+from ai.nudge.nudge_trigger import classify_child_tier
 from ai.nudge.response_service import evaluate_mission_response
 from ai.nudge.schemas import (
     MissionResponseRequest,
@@ -77,13 +78,18 @@ def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
     subtitle_path = get_mock_subtitle_path(request.subtitle_name)
     captions = load_captions(subtitle_path)
     session_id = uuid4().hex
+    child_tier = classify_child_tier(
+        request.child_age,
+        request.can_follow_simple_instruction,
+        request.can_speak,
+    )
 
     save_session(
         session_id,
         {
             "youtube_url": request.youtube_url,
             "subtitle_name": request.subtitle_name,
-            "child_tier": request.child_tier,
+            "child_tier": child_tier,
             "captions": captions,
             "nudge_service": NudgeService(cooldown_seconds=10),
             "missions": {},
@@ -94,7 +100,7 @@ def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
         session_id=session_id,
         youtube_url=request.youtube_url,
         subtitle_name=request.subtitle_name,
-        child_tier=request.child_tier,
+        child_tier=child_tier,
         caption_count=len(captions),
         subtitle_source=f"mock_data/{subtitle_path.name}",
     )

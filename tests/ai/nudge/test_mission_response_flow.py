@@ -32,10 +32,14 @@ def create_session() -> str:
         json={
             "youtube_url": "https://www.youtube.com/watch?v=example",
             "subtitle_name": "pinkfong",
-            "child_tier": "tier2",
+            # classify_child_tier(4, True, True) == "tier2"
+            "child_age": 4,
+            "can_follow_simple_instruction": True,
+            "can_speak": True,
         },
     )
     assert response.status_code == 201
+    assert response.json()["child_tier"] == "tier2"
     return response.json()["session_id"]
 
 
@@ -53,6 +57,8 @@ def create_strong_mission(session_id: str) -> str:
                 "fd": 5.0,
                 "br": 2,
                 "timestamp": 35,
+                "video_duration_sec": 300,
+                "cooldown_ms": 10000,
             },
         )
 

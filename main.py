@@ -45,6 +45,8 @@ def health() -> dict[str, str]:
 class OnboardingRecord(BaseModel):
     ageYears: int
     gender: Literal["male", "female"]
+    canFollowSimpleInstruction: bool
+    canSpeak: bool
     baselineGV: float
     baselineFD: float
     baselineBR: float
@@ -58,6 +60,8 @@ class OnboardingRecordDB(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     ageYears: int
     gender: str
+    canFollowSimpleInstruction: bool
+    canSpeak: bool
     baselineGV: float
     baselineFD: float
     baselineBR: float

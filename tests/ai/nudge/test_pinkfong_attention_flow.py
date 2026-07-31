@@ -51,6 +51,8 @@ def make_payload(timestamp: int, cls_score: float, intensity: str) -> ClsPayload
         fd=4.5,
         br=3,
         timestamp=timestamp,
+        video_duration_sec=300,
+        cooldown_ms=10000,
     )
 
 
