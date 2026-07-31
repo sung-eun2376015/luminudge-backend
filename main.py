@@ -1,9 +1,16 @@
+import os
+from typing import Literal, Optional
+
+import json
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Literal
-import json
-from pathlib import Path
+from sqlmodel import Field, SQLModel, Session, create_engine
+
+load_dotenv()
 
 app = FastAPI(title="LumiNudge API")
 
@@ -16,8 +23,15 @@ app.add_middleware(
 )
 
 MOCK_DATA_DIR = Path(__file__).parent / "mock_data"
-DATA_DIR = Path(__file__).parent / "data"
-ONBOARDING_FILE = DATA_DIR / "onboarding_records.jsonl"
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+engine = create_engine(DATABASE_URL)
+
+
+@app.on_event("startup")
+def on_startup():
+    SQLModel.metadata.create_all(engine)
+
 
 @app.get("/health")
 def health():
@@ -45,9 +59,22 @@ class OnboardingRecord(BaseModel):
     completedAt: str
 
 
+class OnboardingRecordDB(SQLModel, table=True):
+    __tablename__ = "onboarding_records"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ageYears: int
+    gender: str
+    baselineGV: float
+    baselineFD: float
+    baselineBR: float
+    plr: float
+    completedAt: str
+
+
 @app.post("/onboarding", status_code=201)
 def create_onboarding(record: OnboardingRecord):
-    DATA_DIR.mkdir(exist_ok=True)
-    with open(ONBOARDING_FILE, "a", encoding="utf-8") as f:
-        f.write(record.model_dump_json() + "\n")
+    with Session(engine) as session:
+        session.add(OnboardingRecordDB(**record.model_dump()))
+        session.commit()
     return {"status": "ok"}
