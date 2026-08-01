@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -26,21 +27,79 @@ def fake_mission(context: dict, child_tier: str) -> dict:
     }
 
 
-def create_session() -> str:
-    response = client.post(
-        "/sessions",
-        json={
-            "youtube_url": "https://www.youtube.com/watch?v=example",
-            "subtitle_name": "pinkfong",
-            # classify_child_tier(4, True, True) == "tier2"
-            "child_age": 4,
-            "can_follow_simple_instruction": True,
-            "can_speak": True,
-        },
-    )
+def test_onboarding_returns_id_and_computed_tier() -> None:
+    with patch(
+        "main.save_onboarding_record",
+        return_value=SimpleNamespace(id=17),
+    ):
+        response = client.post(
+            "/onboarding",
+            json={
+                "ageYears": 4,
+                "gender": "female",
+                "canFollowSimpleInstruction": True,
+                "canSpeak": True,
+                "baselineGV": 0.25,
+                "baselineFD": 1.2,
+                "baselineBR": 15,
+                "plr": 2.8,
+                "completedAt": "2026-08-01T12:00:00+09:00",
+            },
+        )
+
     assert response.status_code == 201
+    assert response.json() == {
+        "onboarding_id": 17,
+        "child_tier": "tier2",
+    }
+
+
+def test_session_rejects_unknown_onboarding_id() -> None:
+    with patch("ai.nudge.router.get_onboarding_record", return_value=None):
+        response = client.post(
+            "/sessions",
+            json={
+                "youtube_url": "https://www.youtube.com/watch?v=example",
+                "subtitle_name": "pinkfong",
+                "onboarding_id": 999,
+            },
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "온보딩 정보를 찾을 수 없습니다"
+
+
+def create_session() -> str:
+    onboarding = SimpleNamespace(
+        childTier="tier2",
+        baselineGV=0.25,
+        baselineFD=1.2,
+        baselineBR=15.0,
+        plr=2.8,
+    )
+    with patch(
+        "ai.nudge.router.get_onboarding_record",
+        return_value=onboarding,
+    ):
+        response = client.post(
+            "/sessions",
+            json={
+                "youtube_url": "https://www.youtube.com/watch?v=example",
+                "subtitle_name": "pinkfong",
+                "onboarding_id": 17,
+            },
+        )
+    assert response.status_code == 201
+    assert response.json()["onboarding_id"] == 17
     assert response.json()["child_tier"] == "tier2"
-    return response.json()["session_id"]
+    session_id = response.json()["session_id"]
+    assert sessions[session_id]["baseline"] == {
+        "gv": 0.25,
+        "fd": 1.2,
+        "br": 15.0,
+        "plr_seconds": 2.8,
+    }
+    return session_id
 
 
 def create_strong_mission(session_id: str) -> str:
@@ -67,6 +126,11 @@ def create_strong_mission(session_id: str) -> str:
     assert body["question"]["mission_id"]
     assert "answer" not in body["question"]
     assert "expected_keywords" not in body["question"]
+    attention_event = sessions[session_id]["attention_events"][0]
+    assert attention_event["intensity"] == "strong"
+    assert attention_event["cooldown_ms"] == 10000
+    assert attention_event["processing_status"] == "completed"
+    assert attention_event["mission_id"] == body["question"]["mission_id"]
     return body["question"]["mission_id"]
 
 
@@ -215,6 +279,8 @@ def test_voice_response_uses_semantic_csr() -> None:
 
 
 if __name__ == "__main__":
+    test_onboarding_returns_id_and_computed_tier()
+    test_session_rejects_unknown_onboarding_id()
     test_choice_response_returns_praise_and_is_stored()
     test_voice_response_uses_csr_and_requests_stt_fallback()
     test_wrong_choice_returns_hint()

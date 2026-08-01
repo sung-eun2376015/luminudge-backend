@@ -1,4 +1,3 @@
-import time
 from typing import Any, Callable, Dict, List, Optional
 
 from ai.attention.schemas import ClsPayload
@@ -16,14 +15,7 @@ MissionGenerator = Callable[[Dict[str, Any], str], Dict[str, Any]]
 class NudgeService:
     """Connect attention results to caption-aware nudge events."""
 
-    def __init__(
-        self,
-        cooldown_seconds: float = 10.0,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self.cooldown_seconds = cooldown_seconds
-        self._clock = clock
-        self._last_nudge_at: Optional[float] = None
+    def __init__(self) -> None:
         self._created_mission: Optional[Dict[str, Any]] = None
 
     def take_created_mission(self) -> Optional[Dict[str, Any]]:
@@ -31,13 +23,6 @@ class NudgeService:
         mission = self._created_mission
         self._created_mission = None
         return mission
-
-    def _cooldown_remaining(self) -> float:
-        if self._last_nudge_at is None:
-            return 0.0
-
-        elapsed = self._clock() - self._last_nudge_at
-        return max(0.0, self.cooldown_seconds - elapsed)
 
     @staticmethod
     def _frontend_response(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -76,21 +61,6 @@ class NudgeService:
             )
             event["attention"] = metrics
             return self._frontend_response(event)
-
-        cooldown_remaining = self._cooldown_remaining()
-        if cooldown_remaining > 0:
-            return self._frontend_response({
-                "should_nudge": False,
-                "intensity": payload.intensity,
-                "cls_score": payload.cls_score,
-                "child_tier": child_tier,
-                "timestamp": payload.timestamp,
-                "pause_video": False,
-                "source": "cooldown",
-                "cooldown_remaining": cooldown_remaining,
-                "question": None,
-                "attention": metrics,
-            })
 
         mission_queue = MissionQueue()
 
@@ -133,5 +103,4 @@ class NudgeService:
             mission_id=mission_id,
         )
         event["attention"] = metrics
-        self._last_nudge_at = self._clock()
         return self._frontend_response(event)

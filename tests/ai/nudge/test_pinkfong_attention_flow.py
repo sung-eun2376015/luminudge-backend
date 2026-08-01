@@ -10,17 +10,6 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 SUBTITLE_PATH = BASE_DIR / "mock_data" / "subtitle_pinkfong.json"
 
 
-class FakeClock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
-
-
 def load_subtitles() -> list[dict]:
     with SUBTITLE_PATH.open(encoding="utf-8") as file:
         return json.load(file)
@@ -58,8 +47,7 @@ def make_payload(timestamp: int, cls_score: float, intensity: str) -> ClsPayload
 
 def test_pinkfong_attention_flow() -> None:
     captions = load_subtitles()
-    clock = FakeClock()
-    service = NudgeService(cooldown_seconds=10, clock=clock)
+    service = NudgeService()
 
     none_event = service.process(
         make_payload(5, 0.3, "none"), captions, child_tier="tier2"
@@ -67,7 +55,6 @@ def test_pinkfong_attention_flow() -> None:
     assert none_event["should_nudge"] is False
     assert none_event["source"] == "no_trigger"
 
-    clock.advance(1)
     soft_event = service.process(
         make_payload(22, 0.6, "soft"), captions, child_tier="tier2"
     )
@@ -75,19 +62,13 @@ def test_pinkfong_attention_flow() -> None:
     assert soft_event["pause_video"] is False
     assert "question" not in soft_event
 
-    clock.advance(5)
-    cooldown_event = service.process(
+    strong_event = service.process(
         make_payload(35, 0.8, "strong"),
         captions,
         child_tier="tier2",
         generator=fake_gemini,
     )
-    assert cooldown_event["should_nudge"] is False
-    assert cooldown_event["source"] == "cooldown"
-    assert cooldown_event["cooldown_remaining"] == 5
-
-    clock.advance(5)
-    strong_event = service.process(
+    second_strong_event = service.process(
         make_payload(35, 0.8, "strong"),
         captions,
         child_tier="tier2",
@@ -100,10 +81,12 @@ def test_pinkfong_attention_flow() -> None:
     assert response.question is not None
     assert response.question.type == "choice"
     assert response.question.choices == ["노란색 버튼", "파란색 공"]
+    assert second_strong_event["should_nudge"] is True
+    assert second_strong_event["source"] == "mission_queue"
 
     print("=== FRONTEND NUDGE RESPONSE ===")
     print(json.dumps(strong_event, ensure_ascii=False, indent=2))
-    print("PASS: pinkfong subtitles + continuous CLS + cooldown + question output")
+    print("PASS: pinkfong subtitles + continuous CLS + immediate question output")
 
 
 if __name__ == "__main__":

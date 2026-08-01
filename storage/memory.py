@@ -13,6 +13,35 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     return sessions.get(session_id)
 
 
+def save_attention_event(
+    session_id: str,
+    event: dict[str, Any],
+) -> None:
+    session = get_session(session_id)
+    if session is None:
+        raise KeyError(session_id)
+    session.setdefault("attention_events", []).append(event)
+
+
+def get_attention_events(session_id: str) -> list[dict[str, Any]]:
+    session = get_session(session_id)
+    if session is None:
+        return []
+    return session.get("attention_events", [])
+
+
+def update_attention_event(
+    session_id: str,
+    event_id: str,
+    updates: dict[str, Any],
+) -> None:
+    for event in get_attention_events(session_id):
+        if event.get("event_id") == event_id:
+            event.update(updates)
+            return
+    raise KeyError(event_id)
+
+
 def save_mission(
     session_id: str,
     mission_id: str,

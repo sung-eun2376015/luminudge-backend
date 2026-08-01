@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -7,7 +8,6 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from ai.attention.schemas import ClsPayload
 from ai.nudge.nudge_service import NudgeService
-from ai.nudge.nudge_trigger import classify_child_tier
 from ai.nudge.response_service import evaluate_mission_response
 from ai.nudge.schemas import (
     MissionResponseRequest,
@@ -20,7 +20,15 @@ from ai.nudge.audio_transcription_service import (
     AudioTranscriptionError,
     transcribe_audio,
 )
-from storage.memory import get_mission, get_session, save_mission, save_session
+from storage.memory import (
+    get_mission,
+    get_session,
+    save_attention_event,
+    save_mission,
+    save_session,
+    update_attention_event,
+)
+from storage.onboarding import get_onboarding_record
 
 
 router = APIRouter(tags=["Nudge"])
@@ -77,27 +85,36 @@ def get_subtitles(video_name: str) -> list[dict[str, Any]]:
 def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
     subtitle_path = get_mock_subtitle_path(request.subtitle_name)
     captions = load_captions(subtitle_path)
+    onboarding = get_onboarding_record(request.onboarding_id)
+    if onboarding is None:
+        raise HTTPException(status_code=404, detail="온보딩 정보를 찾을 수 없습니다")
+
     session_id = uuid4().hex
-    child_tier = classify_child_tier(
-        request.child_age,
-        request.can_follow_simple_instruction,
-        request.can_speak,
-    )
+    child_tier = onboarding.childTier
 
     save_session(
         session_id,
         {
+            "onboarding_id": request.onboarding_id,
             "youtube_url": request.youtube_url,
             "subtitle_name": request.subtitle_name,
             "child_tier": child_tier,
+            "baseline": {
+                "gv": onboarding.baselineGV,
+                "fd": onboarding.baselineFD,
+                "br": onboarding.baselineBR,
+                "plr_seconds": onboarding.plr,
+            },
             "captions": captions,
-            "nudge_service": NudgeService(cooldown_seconds=10),
+            "nudge_service": NudgeService(),
+            "attention_events": [],
             "missions": {},
         },
     )
 
     return SessionCreateResponse(
         session_id=session_id,
+        onboarding_id=request.onboarding_id,
         youtube_url=request.youtube_url,
         subtitle_name=request.subtitle_name,
         child_tier=child_tier,
@@ -112,8 +129,28 @@ def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
     if session is None:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
 
+    event_id = uuid4().hex
+    mission_id = uuid4().hex if payload.intensity == "strong" else None
+    save_attention_event(
+        session_id,
+        {
+            "event_id": event_id,
+            "session_id": session_id,
+            "cls_score": payload.cls_score,
+            "intensity": payload.intensity,
+            "gv": payload.gv,
+            "fd": payload.fd,
+            "br": payload.br,
+            "video_timestamp": payload.timestamp,
+            "video_duration_sec": payload.video_duration_sec,
+            "cooldown_ms": payload.cooldown_ms,
+            "mission_id": mission_id,
+            "processing_status": "received",
+            "received_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
     try:
-        mission_id = uuid4().hex if payload.intensity == "strong" else None
         response = session["nudge_service"].process(
             payload=payload,
             captions=session["captions"],
@@ -127,8 +164,26 @@ def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
                 created_mission["mission_id"],
                 created_mission,
             )
+        update_attention_event(
+            session_id,
+            event_id,
+            {
+                "should_nudge": response["should_nudge"],
+                "pause_video": response["pause_video"],
+                "response_source": response["source"],
+                "processing_status": "completed",
+            },
+        )
         return response
     except ValueError as error:
+        update_attention_event(
+            session_id,
+            event_id,
+            {
+                "processing_status": "failed",
+                "error": str(error),
+            },
+        )
         raise HTTPException(status_code=502, detail=str(error)) from error
 
 
