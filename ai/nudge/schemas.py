@@ -23,11 +23,10 @@ class NudgeResponse(BaseModel):
     child_tier: str
     timestamp: float
     pause_video: bool
-    source: Literal["no_trigger", "cooldown", "soft_lumi", "mission_queue", "fallback"]
+    source: Literal["no_trigger", "soft_lumi", "mission_queue", "fallback"]
     question: NudgeQuestion | None = None
     context_source: str | None = None
     scene_summary: str | None = None
-    cooldown_remaining: float | None = None
     attention: AttentionMetrics
 
     def to_frontend(self) -> dict[str, Any]:
@@ -37,14 +36,12 @@ class NudgeResponse(BaseModel):
 class SessionCreateRequest(BaseModel):
     youtube_url: str = Field(min_length=1)
     subtitle_name: Literal["pinkfong", "pororo"]
-    # child_tier는 프론트가 직접 고르지 않고, 아래 값들로 classify_child_tier가 서버에서 계산한다.
-    child_age: int
-    can_follow_simple_instruction: bool
-    can_speak: bool
+    onboarding_id: int = Field(gt=0)
 
 
 class SessionCreateResponse(BaseModel):
     session_id: str
+    onboarding_id: int
     youtube_url: str
     subtitle_name: Literal["pinkfong", "pororo"]
     child_tier: Literal["tier1", "tier2", "tier3"]

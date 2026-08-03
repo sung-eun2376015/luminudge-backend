@@ -11,7 +11,7 @@ YouTube URL + mock 자막 선택
           ↓
 AI-1 ClsPayload 연속 입력
           ↓
-intensity 및 Nudge 쿨다운 확인
+프론트에서 확정한 intensity 기록 및 처리
           ↓
 none   → 개입 없음
 soft   → 영상 유지 + 루미 표시
@@ -24,7 +24,7 @@ strong → timestamp 기준 자막 선택
 
 - `pinkfong`, `pororo` mock 자막 기반 세션 생성
 - `none`, `soft`, `strong` Nudge 분기
-- 세션별 개발용 10초 쿨다운
+- 프론트 쿨다운 값과 Attention 이벤트를 리포트용으로 메모리 저장
 - timestamp 기준 현재/이전 자막 맥락 선택
 - 실제 Gemini Tier별 질문 생성
 - strong 미션별 `mission_id` 발급 및 세션 메모리 저장
@@ -67,6 +67,37 @@ GEMINI_API_KEY=your_api_key
 
 ### 1. 시청 세션 생성
 
+최초 온보딩을 먼저 저장합니다.
+
+```http
+POST /onboarding
+```
+
+```json
+{
+  "ageYears": 4,
+  "gender": "female",
+  "canFollowSimpleInstruction": true,
+  "canSpeak": true,
+  "baselineGV": 0.25,
+  "baselineFD": 1.2,
+  "baselineBR": 15,
+  "plr": 2.8,
+  "completedAt": "2026-08-01T12:00:00+09:00"
+}
+```
+
+백엔드는 발달 tier를 계산해 온보딩 데이터와 함께 저장합니다.
+
+```json
+{
+  "onboarding_id": 17,
+  "child_tier": "tier2"
+}
+```
+
+이후 반환된 `onboarding_id`로 시청 세션을 생성합니다.
+
 ```http
 POST /sessions
 ```
@@ -77,19 +108,22 @@ Swagger에서 `POST /sessions` → `Try it out`을 누르고 실행합니다.
 {
   "youtube_url": "https://www.youtube.com/watch?v=example",
   "subtitle_name": "pinkfong",
-  "child_tier": "tier2"
+  "onboarding_id": 17
 }
 ```
 
 - `youtube_url`: 사용자가 입력한 YouTube URL
 - `subtitle_name`: MVP mock 자막 선택값 (`pinkfong` 또는 `pororo`)
-- `child_tier`: 미션 난이도 (`tier1`, `tier2`, `tier3`)
+- `onboarding_id`: `POST /onboarding`에서 반환받은 온보딩 ID
+
+백엔드는 온보딩 DB에서 계산된 `child_tier`와 baseline을 조회해 세션에 연결합니다.
 
 응답:
 
 ```json
 {
   "session_id": "생성된 세션 ID",
+  "onboarding_id": 17,
   "youtube_url": "https://www.youtube.com/watch?v=example",
   "subtitle_name": "pinkfong",
   "child_tier": "tier2",
@@ -117,7 +151,9 @@ POST /sessions/{session_id}/nudge
   "gv": 0.1,
   "fd": 5.0,
   "br": 2,
-  "timestamp": 35
+  "timestamp": 35.2,
+  "video_duration_sec": 300,
+  "cooldown_ms": 10000
 }
 ```
 
@@ -127,8 +163,10 @@ POST /sessions/{session_id}/nudge
 - `fd`: Fixation Duration
 - `br`: Blink Rate
 - `timestamp`: 현재 YouTube 재생 시간(초)
+- `video_duration_sec`: 현재 영상의 전체 길이(초)
+- `cooldown_ms`: 프론트가 적용한 쿨다운 값. 백엔드는 제어에 사용하지 않고 리포트용으로 저장
 
-AI-2는 `cls_score`로 강도를 다시 계산하지 않고 AI-1의 `intensity`에 따라 동작합니다. 쿨다운은 백엔드가 실제 경과 시간으로 관리하고, `timestamp`는 자막 선택에 사용합니다.
+AI-2는 `cls_score`로 강도를 다시 계산하거나 쿨다운으로 요청을 차단하지 않습니다. 프론트가 확정해 보낸 `intensity`에 즉시 반응하고, `timestamp`는 자막 선택에 사용합니다. 모든 Attention 입력과 처리 결과는 현재 세션 메모리에 리포트용 이벤트로 저장합니다.
 
 ### 3. strong 미션 생성 및 저장
 
@@ -412,20 +450,18 @@ Web Speech 성공?
 - `question.type`: `gesture`, `choice`, `open_question` 등 UI 유형
 - `question.text`: 표시할 질문
 - `question.choices`: 선택형 질문의 보기
-- `source`: `no_trigger`, `cooldown`, `soft_lumi`, `mission_queue`, `fallback`
+- `source`: `no_trigger`, `soft_lumi`, `mission_queue`, `fallback`
 
 Gemini가 생성한 정답과 평가 기준은 프론트 응답에 노출하지 않습니다.
 
-## 쿨다운
+## 쿨다운과 Attention 기록
 
-- 첫 Nudge는 즉시 실행합니다.
-- Nudge 실행 후 같은 세션의 다음 개입을 10초 동안 보류합니다.
-- `none`은 쿨다운을 시작하지 않습니다.
-- 초기 운영 가설은 5분이었지만, 대상 영상이 주로 3~5분이고 현재 반복 검증이 필요한 개발 단계인 점을 반영해 10초를 사용합니다.
-- 현재 10초는 개발·테스트 전용 값이며 운영 목표값은 파일럿 결과를 보고 추후 확정합니다.
-- 세션마다 별도의 `NudgeService`를 사용하므로 쿨다운도 독립적입니다.
+- 쿨다운은 프론트에서 관리합니다.
+- 백엔드는 전달받은 `none`, `soft`, `strong`에 즉시 반응합니다.
+- `cooldown_ms`는 프론트에서 적용한 값을 리포트용으로 기록할 뿐, 요청 차단에는 사용하지 않습니다.
+- 각 요청의 CLS 지표, 영상 시점, 영상 길이, 쿨다운 값, 미션 ID와 처리 결과를 세션의 `attention_events`에 저장합니다.
 
-서버를 재시작하면 현재 메모리 세션과 쿨다운 상태는 사라집니다.
+현재 저장소는 메모리 기반이므로 서버를 재시작하면 세션과 Attention 이벤트가 사라집니다. 저장 함수는 추후 DB 저장소로 교체할 수 있도록 분리되어 있습니다.
 
 ## 테스트
 
@@ -439,7 +475,7 @@ python -m tests.ai.nudge.test_pinkfong_attention_flow
 
 1. `subtitle_pinkfong.json` 로드
 2. 연속 `none → soft → strong` 입력
-3. soft 이후 10초 쿨다운
+3. 서버 쿨다운 없이 연속 strong 요청 즉시 처리
 4. timestamp 35초 자막 맥락 선택
 5. Tier 2 선택형 질문 생성
 6. `NudgeResponse` 출력 형식 검증
@@ -449,7 +485,7 @@ python -m tests.ai.nudge.test_pinkfong_attention_flow
 성공 메시지:
 
 ```text
-PASS: pinkfong subtitles + continuous CLS + cooldown + question output
+PASS: pinkfong subtitles + continuous CLS + immediate question output
 ```
 
 ## 주요 파일
@@ -464,10 +500,10 @@ ai/nudge/caption_slicer.py                    timestamp 기반 자막 선택
 ai/nudge/mission_generator.py                 Gemini 질문 생성
 ai/nudge/audio_transcription_service.py       Gemini 오디오 전사
 ai/nudge/nudge_trigger.py                     intensity별 응답 생성
-ai/nudge/nudge_service.py                     쿨다운·자막·질문 통합
+ai/nudge/nudge_service.py                     intensity·자막·질문 통합
 ai/nudge/response_service.py                  선택·음성·제스처 답변 평가
 ai/nudge/schemas.py                           API 요청 및 프론트 출력 스키마
-storage/memory.py                             MVP용 세션·미션 메모리 저장소
+storage/memory.py                             MVP용 세션·미션·Attention 이벤트 저장소
 tests/ai/nudge/test_pinkfong_attention_flow.py 자동 통합 테스트
 tests/ai/nudge/test_mission_response_flow.py   미션 저장·답변 API 통합 테스트
 tests/ai/nudge/test_audio_transcription_service.py Gemini 오디오 전사 테스트
@@ -479,4 +515,4 @@ tests/ai/nudge/test_audio_transcription_service.py Gemini 오디오 전사 테�
 2. mock `subtitle_name`을 실제 captions 입력 또는 자막 추출기로 교체
 3. AI-1이 세션 ID와 함께 `ClsPayload`를 실시간 전송
 4. 프론트가 `NudgeResponse`에 따라 루미, 영상 및 질문 UI 제어
-5. Redis/DB 세션 저장과 운영용 쿨다운 설정
+5. 메모리 Attention 이벤트 저장을 PostgreSQL 저장소로 교체
