@@ -57,12 +57,21 @@ class NudgeResponse(BaseModel):
 
 class CaptionInput(BaseModel):
     start: float = Field(ge=0, description="자막 시작 시점(초)")
-    end: float = Field(gt=0, description="자막 종료 시점(초)")
+    duration: float | None = Field(default=None, gt=0, description="자막 재생 길이(초)")
+    end: float | None = Field(
+        default=None,
+        gt=0,
+        description="자막 종료 시점(초). duration 대신 사용할 수 있습니다.",
+    )
     text: str = Field(min_length=1, description="자막 내용")
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "CaptionInput":
-        if self.end <= self.start:
+        if self.duration is None and self.end is None:
+            raise ValueError("duration 또는 end 중 하나가 필요합니다")
+        if self.end is None and self.duration is not None:
+            self.end = self.start + self.duration
+        if self.end is not None and self.end <= self.start:
             raise ValueError("end는 start보다 커야 합니다")
         return self
 
@@ -75,7 +84,7 @@ class SessionCreateRequest(BaseModel):
                     "youtube_url": "https://www.youtube.com/watch?v=example",
                     "onboarding_id": 17,
                     "captions": [
-                        {"start": 28, "end": 43, "text": "방의 온도가 바뀌어요."}
+                        {"start": 28, "duration": 15, "text": "방의 온도가 바뀌어요."}
                     ],
                 },
                 {

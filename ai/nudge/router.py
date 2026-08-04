@@ -106,7 +106,10 @@ def get_subtitles(video_name: str) -> list[dict[str, Any]]:
 def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
     subtitle_path: Path | None = None
     if request.captions:
-        captions = [caption.model_dump() for caption in request.captions]
+        captions = [
+            {"start": caption.start, "end": caption.end, "text": caption.text}
+            for caption in request.captions
+        ]
         subtitle_source = "provided_captions"
     else:
         subtitle_path = get_mock_subtitle_path(request.subtitle_name or "")

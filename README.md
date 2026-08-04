@@ -128,11 +128,14 @@ Content-Type: application/json
   "youtube_url": "https://www.youtube.com/watch?v=example",
   "onboarding_id": 17,
   "captions": [
-    {"start": 28, "end": 43, "text": "방의 온도가 파란색으로 변해요."},
-    {"start": 43, "end": 58, "text": "친구들이 버튼을 다시 눌러요."}
+    {"start": 28, "duration": 15, "text": "방의 온도가 파란색으로 변해요."},
+    {"start": 43, "duration": 15, "text": "친구들이 버튼을 다시 눌러요."}
   ]
 }
 ```
+
+프론트는 `start`, `duration`, `text`를 보내는 것을 권장합니다. 이미 종료 시점을
+제공하는 자막 모듈과의 호환을 위해 `duration` 대신 `end`를 보내는 것도 허용합니다.
 
 ### 개발용 mock 자막
 

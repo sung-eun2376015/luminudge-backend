@@ -121,7 +121,7 @@ def test_session_accepts_provided_captions() -> None:
                 "youtube_url": "https://www.youtube.com/watch?v=example",
                 "onboarding_id": 17,
                 "captions": [
-                    {"start": 28, "end": 43, "text": "방의 온도가 바뀌어요."}
+                    {"start": 28, "duration": 15, "text": "방의 온도가 바뀌어요."}
                 ],
             },
         )
@@ -132,6 +132,7 @@ def test_session_accepts_provided_captions() -> None:
     assert body["subtitle_source"] == "provided_captions"
     assert body["caption_count"] == 1
     assert sessions[body["session_id"]]["captions"][0]["start"] == 28
+    assert sessions[body["session_id"]]["captions"][0]["end"] == 43
 
 
 def test_session_requires_a_subtitle_source() -> None:
