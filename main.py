@@ -13,7 +13,24 @@ from storage.onboarding import (
 
 load_dotenv()
 
-app = FastAPI(title="LumiNudge API")
+tags_metadata = [
+    {"name": "System", "description": "서버 상태 확인"},
+    {"name": "Onboarding", "description": "아동 초기 정보와 발달 tier 생성"},
+    {"name": "Sessions", "description": "영상 시청 세션 생성"},
+    {"name": "Subtitles", "description": "개발용 mock 자막 확인"},
+    {"name": "Attention / Nudge", "description": "프론트 AI-1 결과를 Nudge로 변환"},
+    {"name": "Mission Responses", "description": "질문 응답 평가와 음성 fallback"},
+]
+
+app = FastAPI(
+    title="LumiNudge Backend API",
+    version="1.0.0",
+    description=(
+        "프론트 AI-1의 Attention 분석 결과를 받아 아동 맞춤형 Nudge를 생성합니다. "
+        "프론트는 온보딩 → 세션 → Nudge → 미션 응답 순서로 호출합니다."
+    ),
+    openapi_tags=tags_metadata,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +47,7 @@ def on_startup():
     initialize_database()
 
 
-@app.get("/health")
+@app.get("/health", tags=["System"], summary="서버 상태 확인")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -39,6 +56,13 @@ def health() -> dict[str, str]:
     "/onboarding",
     response_model=OnboardingCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["Onboarding"],
+    summary="온보딩 생성",
+    description=(
+        "아동 정보를 저장하고 tier를 계산합니다. 반환된 onboarding_id는 프론트에서 "
+        "보관한 뒤 세션 생성 요청에 사용합니다."
+    ),
+    responses={422: {"description": "온보딩 데이터 검증 실패"}},
 )
 def create_onboarding(record: OnboardingRecord) -> OnboardingCreateResponse:
     child_tier = classify_child_tier(

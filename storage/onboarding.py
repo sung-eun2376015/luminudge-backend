@@ -47,6 +47,9 @@ engine = create_engine(DATABASE_URL)
 
 
 def initialize_database() -> None:
+    # Importing registers session, attention, and mission tables in metadata.
+    import storage.memory  # noqa: F401
+
     SQLModel.metadata.create_all(engine)
 
 

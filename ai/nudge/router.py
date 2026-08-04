@@ -31,7 +31,12 @@ from storage.memory import (
 from storage.onboarding import get_onboarding_record
 
 
-router = APIRouter(tags=["Nudge"])
+router = APIRouter()
+
+COMMON_ERROR_RESPONSES = {
+    404: {"description": "요청한 온보딩, 세션 또는 미션을 찾을 수 없음"},
+    422: {"description": "요청 데이터 검증 실패"},
+}
 
 MOCK_DATA_DIR = Path(__file__).resolve().parents[2] / "mock_data"
 MOCK_SUBTITLE_FILES = {
@@ -56,6 +61,7 @@ def get_mock_subtitle_path(subtitle_name: str) -> Path:
 
 
 def store_response_result(
+    session_id: str,
     mission: dict[str, Any],
     request: MissionResponseRequest,
     result: MissionResponseResult,
@@ -69,9 +75,16 @@ def store_response_result(
     mission["result"] = result.model_dump()
     mission["answered"] = result.reaction == "praise"
     mission["status"] = "completed" if mission["answered"] else "awaiting_retry"
+    save_mission(session_id, mission["mission_id"], mission)
 
 
-@router.get("/subtitles/{video_name}")
+@router.get(
+    "/subtitles/{video_name}",
+    tags=["Subtitles"],
+    summary="개발용 mock 자막 조회",
+    description="pinkfong 또는 pororo mock 자막을 반환합니다. 운영용 자막 API가 아닙니다.",
+    responses={404: {"description": "지원하지 않는 mock 자막"}},
+)
 def get_subtitles(video_name: str) -> list[dict[str, Any]]:
     file_path = get_mock_subtitle_path(video_name)
     return load_captions(file_path)
@@ -81,10 +94,24 @@ def get_subtitles(video_name: str) -> list[dict[str, Any]]:
     "/sessions",
     response_model=SessionCreateResponse,
     status_code=status.HTTP_201_CREATED,
+    tags=["Sessions"],
+    summary="영상 시청 세션 생성",
+    description=(
+        "온보딩 ID와 YouTube URL로 시청 세션을 생성합니다. captions가 있으면 실제 입력 "
+        "자막을 우선 사용하고, 없으면 subtitle_name의 개발용 mock 자막을 사용합니다. "
+        "반환된 session_id는 해당 영상 시청이 끝날 때까지 프론트에서 보관해야 합니다."
+    ),
+    responses=COMMON_ERROR_RESPONSES,
 )
 def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
-    subtitle_path = get_mock_subtitle_path(request.subtitle_name)
-    captions = load_captions(subtitle_path)
+    subtitle_path: Path | None = None
+    if request.captions:
+        captions = [caption.model_dump() for caption in request.captions]
+        subtitle_source = "provided_captions"
+    else:
+        subtitle_path = get_mock_subtitle_path(request.subtitle_name or "")
+        captions = load_captions(subtitle_path)
+        subtitle_source = f"mock_data/{subtitle_path.name}"
     onboarding = get_onboarding_record(request.onboarding_id)
     if onboarding is None:
         raise HTTPException(status_code=404, detail="온보딩 정보를 찾을 수 없습니다")
@@ -98,6 +125,7 @@ def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
             "onboarding_id": request.onboarding_id,
             "youtube_url": request.youtube_url,
             "subtitle_name": request.subtitle_name,
+            "subtitle_source": subtitle_source,
             "child_tier": child_tier,
             "baseline": {
                 "gv": onboarding.baselineGV,
@@ -106,7 +134,6 @@ def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
                 "plr_seconds": onboarding.plr,
             },
             "captions": captions,
-            "nudge_service": NudgeService(),
             "attention_events": [],
             "missions": {},
         },
@@ -119,11 +146,25 @@ def create_session(request: SessionCreateRequest) -> SessionCreateResponse:
         subtitle_name=request.subtitle_name,
         child_tier=child_tier,
         caption_count=len(captions),
-        subtitle_source=f"mock_data/{subtitle_path.name}",
+        subtitle_source=subtitle_source,
     )
 
 
-@router.post("/sessions/{session_id}/nudge", response_model=NudgeResponse)
+@router.post(
+    "/sessions/{session_id}/nudge",
+    response_model=NudgeResponse,
+    tags=["Attention / Nudge"],
+    summary="AI-1 Attention 결과 처리",
+    description=(
+        "프론트 AI-1이 계산한 ClsPayload를 세션 문맥과 함께 처리합니다. "
+        "pause_video가 true이면 프론트는 영상을 정지하고 question을 표시해야 합니다. "
+        "timestamp와 video_duration_sec는 초, cooldown_ms는 밀리초 단위입니다."
+    ),
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        502: {"description": "Gemini 미션 생성 실패"},
+    },
+)
 def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
     session = get_session(session_id)
     if session is None:
@@ -151,13 +192,14 @@ def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
     )
 
     try:
-        response = session["nudge_service"].process(
+        nudge_service = NudgeService()
+        response = nudge_service.process(
             payload=payload,
             captions=session["captions"],
             child_tier=session["child_tier"],
             mission_id=mission_id,
         )
-        created_mission = session["nudge_service"].take_created_mission()
+        created_mission = nudge_service.take_created_mission()
         if created_mission is not None:
             save_mission(
                 session_id,
@@ -190,6 +232,17 @@ def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
 @router.post(
     "/sessions/{session_id}/missions/{mission_id}/responses",
     response_model=MissionResponseResult,
+    tags=["Mission Responses"],
+    summary="미션 응답 제출",
+    description=(
+        "choice, voice(Web Speech transcript), gesture 응답을 평가합니다. "
+        "response_time_ms는 질문 표시부터 응답 완료까지의 밀리초입니다. "
+        "resume_video가 true일 때만 프론트가 영상을 재생합니다."
+    ),
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        409: {"description": "이미 완료된 미션에 대한 중복 응답"},
+    },
 )
 def submit_mission_response(
     session_id: str,
@@ -207,13 +260,25 @@ def submit_mission_response(
         raise HTTPException(status_code=409, detail="이미 답변한 미션입니다")
 
     result = evaluate_mission_response(mission=mission, request=request)
-    store_response_result(mission, request, result)
+    store_response_result(session_id, mission, request, result)
     return result
 
 
 @router.post(
     "/sessions/{session_id}/missions/{mission_id}/responses/audio",
     response_model=MissionResponseResult,
+    tags=["Mission Responses"],
+    summary="Gemini 음성 전사 fallback",
+    description=(
+        "Web Speech가 transcript를 만들지 못했거나 신뢰도가 낮을 때 녹음 파일을 전송합니다. "
+        "audio, response_time_ms, language를 multipart/form-data로 전달합니다."
+    ),
+    responses={
+        400: {"description": "빈 파일, 미지원 확장자 또는 10MB 초과"},
+        **COMMON_ERROR_RESPONSES,
+        409: {"description": "이미 완료된 미션에 대한 중복 응답"},
+        502: {"description": "Gemini 음성 전사 실패"},
+    },
 )
 async def submit_audio_mission_response(
     session_id: str,
@@ -255,5 +320,5 @@ async def submit_audio_mission_response(
         response_time_ms=response_time_ms,
     )
     result = evaluate_mission_response(mission=mission, request=request)
-    store_response_result(mission, request, result)
+    store_response_result(session_id, mission, request, result)
     return result

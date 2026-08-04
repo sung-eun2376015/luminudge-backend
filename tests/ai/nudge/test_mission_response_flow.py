@@ -1,7 +1,10 @@
+import os
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+os.environ["SESSION_STORAGE"] = "memory"
 
 from ai.nudge.semantic_csr import SemanticCSRResult
 from main import app
@@ -100,6 +103,46 @@ def create_session() -> str:
         "plr_seconds": 2.8,
     }
     return session_id
+
+
+def test_session_accepts_provided_captions() -> None:
+    sessions.clear()
+    onboarding = SimpleNamespace(
+        childTier="tier2",
+        baselineGV=0.25,
+        baselineFD=1.2,
+        baselineBR=15.0,
+        plr=2.8,
+    )
+    with patch("ai.nudge.router.get_onboarding_record", return_value=onboarding):
+        response = client.post(
+            "/sessions",
+            json={
+                "youtube_url": "https://www.youtube.com/watch?v=example",
+                "onboarding_id": 17,
+                "captions": [
+                    {"start": 28, "end": 43, "text": "방의 온도가 바뀌어요."}
+                ],
+            },
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["subtitle_name"] is None
+    assert body["subtitle_source"] == "provided_captions"
+    assert body["caption_count"] == 1
+    assert sessions[body["session_id"]]["captions"][0]["start"] == 28
+
+
+def test_session_requires_a_subtitle_source() -> None:
+    response = client.post(
+        "/sessions",
+        json={
+            "youtube_url": "https://www.youtube.com/watch?v=example",
+            "onboarding_id": 17,
+        },
+    )
+    assert response.status_code == 422
 
 
 def create_strong_mission(session_id: str) -> str:
@@ -281,6 +324,8 @@ def test_voice_response_uses_semantic_csr() -> None:
 if __name__ == "__main__":
     test_onboarding_returns_id_and_computed_tier()
     test_session_rejects_unknown_onboarding_id()
+    test_session_accepts_provided_captions()
+    test_session_requires_a_subtitle_source()
     test_choice_response_returns_praise_and_is_stored()
     test_voice_response_uses_csr_and_requests_stt_fallback()
     test_wrong_choice_returns_hint()

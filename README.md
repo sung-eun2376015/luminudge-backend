@@ -1,50 +1,18 @@
 # LumiNudge Backend
 
-영상 자막과 AI-1의 Attention 분석 결과를 이용해 개입 여부를 결정하고, 필요한 경우 Gemini로 아동 발달 티어에 맞는 질문을 생성하는 FastAPI 백엔드입니다.
+프론트엔드 AI-1의 Attention 분석 결과를 받아 아동 맞춤형 Nudge를 생성하는
+FastAPI 백엔드입니다. 프론트는 카메라 영상을 서버로 보내지 않고 브라우저에서
+계산한 `ClsPayload`만 전송합니다.
 
-## 현재 구현 범위
+## API 문서
 
-```text
-YouTube URL + mock 자막 선택
-          ↓
-시청 세션 생성
-          ↓
-AI-1 ClsPayload 연속 입력
-          ↓
-프론트에서 확정한 intensity 기록 및 처리
-          ↓
-none   → 개입 없음
-soft   → 영상 유지 + 루미 표시
-strong → timestamp 기준 자막 선택
-         → Gemini 질문 생성
-         → 영상 정지 + 질문 반환
-```
+서버 실행 후 다음 문서를 사용할 수 있습니다.
 
-현재 구현 및 검증된 항목:
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- OpenAPI JSON: `http://127.0.0.1:8000/openapi.json`
+- Health Check: `http://127.0.0.1:8000/health`
 
-- `pinkfong`, `pororo` mock 자막 기반 세션 생성
-- `none`, `soft`, `strong` Nudge 분기
-- 프론트 쿨다운 값과 Attention 이벤트를 리포트용으로 메모리 저장
-- timestamp 기준 현재/이전 자막 맥락 선택
-- 실제 Gemini Tier별 질문 생성
-- strong 미션별 `mission_id` 발급 및 세션 메모리 저장
-- 선택형·제스처·Web Speech transcript 답변 평가
-- Gemini Sentence Embedding 기반 CSR 계산
-- Gemini 오디오 전사 fallback
-- `praise`, `hint`, `retry` 및 영상 재개 여부 반환
-- 답변 시도 이력 누적
-- 프론트 전달용 `NudgeResponse`
-- FastAPI 세션·Nudge·답변 API
-
-아직 연결되지 않은 항목:
-
-- 임의 YouTube URL의 실제 자막 추출
-- AI-1의 실시간 `ClsPayload` 전송
-- 프론트의 루미 표시, 영상 정지 및 질문 UI
-- Redis/DB 기반 영구 세션 저장
-- ARI/PLR/CSR 영구 로깅 및 부모 리포트
-
-## 설치 및 실행
+## 실행
 
 ```powershell
 python -m venv .venv
@@ -53,24 +21,74 @@ python -m pip install -r requirements.txt
 python -m uvicorn main:app --reload
 ```
 
-- 서버: `http://127.0.0.1:8000`
-- Swagger API 문서: `http://127.0.0.1:8000/docs`
-- Health Check: `http://127.0.0.1:8000/health`
-
-실제 Gemini 호출을 위해 프로젝트 루트의 `.env`에 API 키가 필요합니다.
+프로젝트 루트에 `.env`를 생성합니다.
 
 ```env
 GEMINI_API_KEY=your_api_key
+DATABASE_URL=postgresql://...
+SESSION_STORAGE=database
 ```
 
-## API 사용법
+- `SESSION_STORAGE=database`: 운영 기본값. 세션, Attention 이벤트, 미션을 DB에 저장합니다.
+- `SESSION_STORAGE=memory`: 외부 DB 없이 실행하는 테스트 전용 모드입니다.
 
-### 1. 시청 세션 생성
+DB에는 `migrations/001_onboarding_child_tier.sql`과
+`migrations/002_session_mission_storage.sql`을 순서대로 적용합니다. 앱 시작 시
+SQLModel의 `create_all`도 실행되지만 기존 테이블 변경은 migration을 기준으로 관리합니다.
 
-최초 온보딩을 먼저 저장합니다.
+## 전체 프론트 연동 흐름
+
+```text
+1. POST /onboarding
+   → onboarding_id 보관
+
+2. POST /sessions
+   → session_id 보관
+
+3. 프론트에서 카메라/센서와 AI-1 실행
+   → POST /sessions/{session_id}/nudge
+
+4. NudgeResponse 처리
+   → none: 아무 동작 없음
+   → soft: Lumi 표시
+   → strong: 영상 정지 + 질문 표시 + mission_id 보관
+
+5. POST /sessions/{session_id}/missions/{mission_id}/responses
+   → praise: 성공 표시 후 영상 재생
+   → hint/retry: 영상 정지 유지 후 재응답
+
+6. Web Speech 실패 시
+   → POST .../responses/audio
+   → Gemini 음성 전사 및 CSR 평가
+```
+
+## 프론트 ID 보관 규칙
+
+| ID | 권장 보관 위치 | 수명 |
+|---|---|---|
+| `onboarding_id` | 사용자 상태 또는 `localStorage` | 아동 프로필 유지 기간 |
+| `session_id` | 전역 상태 + `sessionStorage` | 한 영상의 시청 세션 |
+| `mission_id` | 현재 질문 컴포넌트 상태 | 질문 완료까지 |
+
+세션이 `404`를 반환하면 프론트는 기존 `session_id`를 버리고 새 세션을 생성합니다.
+
+## 시간 단위
+
+| 필드 | 단위 | 기준 |
+|---|---:|---|
+| `timestamp` | 초 | 영상 시작점부터 현재 재생 위치 |
+| `video_duration_sec` | 초 | 영상 전체 길이 |
+| `response_time_ms` | 밀리초 | 질문 표시부터 응답 완료까지 |
+| `cooldown_ms` | 밀리초 | 프론트에서 적용한 Nudge 제한 시간 |
+| `plr_seconds` | 초 | 백엔드가 응답 시간으로 계산한 값 |
+
+`timestamp`에는 Unix timestamp가 아니라 YouTube Player의 `getCurrentTime()` 값을 사용합니다.
+
+## 1. 온보딩 생성
 
 ```http
 POST /onboarding
+Content-Type: application/json
 ```
 
 ```json
@@ -87,8 +105,6 @@ POST /onboarding
 }
 ```
 
-백엔드는 발달 tier를 계산해 온보딩 데이터와 함께 저장합니다.
-
 ```json
 {
   "onboarding_id": 17,
@@ -96,53 +112,64 @@ POST /onboarding
 }
 ```
 
-이후 반환된 `onboarding_id`로 시청 세션을 생성합니다.
+## 2. 시청 세션 생성
+
+### 실제 자막 전달
+
+`captions`가 있으면 백엔드는 해당 자막을 우선 사용합니다.
 
 ```http
 POST /sessions
+Content-Type: application/json
 ```
-
-Swagger에서 `POST /sessions` → `Try it out`을 누르고 실행합니다.
 
 ```json
 {
   "youtube_url": "https://www.youtube.com/watch?v=example",
-  "subtitle_name": "pinkfong",
-  "onboarding_id": 17
+  "onboarding_id": 17,
+  "captions": [
+    {"start": 28, "end": 43, "text": "방의 온도가 파란색으로 변해요."},
+    {"start": 43, "end": 58, "text": "친구들이 버튼을 다시 눌러요."}
+  ]
 }
 ```
 
-- `youtube_url`: 사용자가 입력한 YouTube URL
-- `subtitle_name`: MVP mock 자막 선택값 (`pinkfong` 또는 `pororo`)
-- `onboarding_id`: `POST /onboarding`에서 반환받은 온보딩 ID
+### 개발용 mock 자막
 
-백엔드는 온보딩 DB에서 계산된 `child_tier`와 baseline을 조회해 세션에 연결합니다.
+실제 자막 연결 전에는 `subtitle_name`으로 `pinkfong` 또는 `pororo`를 사용합니다.
+
+```json
+{
+  "youtube_url": "https://www.youtube.com/watch?v=example",
+  "onboarding_id": 17,
+  "subtitle_name": "pinkfong"
+}
+```
+
+`captions`와 `subtitle_name` 중 하나는 반드시 필요합니다.
 
 응답:
 
 ```json
 {
-  "session_id": "생성된 세션 ID",
+  "session_id": "session-id",
   "onboarding_id": 17,
   "youtube_url": "https://www.youtube.com/watch?v=example",
-  "subtitle_name": "pinkfong",
+  "subtitle_name": null,
   "child_tier": "tier2",
-  "caption_count": 21,
-  "subtitle_source": "mock_data/subtitle_pinkfong.json"
+  "caption_count": 2,
+  "subtitle_source": "provided_captions"
 }
 ```
 
-현재 `youtube_url`은 세션에 저장만 하며 실제 자막 추출에는 사용하지 않습니다. `subtitle_name`은 mock 파일을 선택하기 위한 임시 필드이며, 실제 자막 연동 후 제거할 예정입니다.
+## 3. Attention 결과와 Nudge
 
-### 2. Attention 결과 전송
-
-세션 생성 응답의 `session_id`를 사용합니다.
+AI-1은 프론트에서 실행하며 프론트가 결과를 백엔드에 전달합니다.
 
 ```http
 POST /sessions/{session_id}/nudge
+Content-Type: application/json
 ```
-
-요청은 `ai/attention/schemas.py`의 `ClsPayload` 형식을 따릅니다.
 
 ```json
 {
@@ -157,28 +184,16 @@ POST /sessions/{session_id}/nudge
 }
 ```
 
-- `cls_score`: AI-1이 계산한 Cognitive Load Score (`0.0`~`1.0`)
-- `intensity`: AI-1의 최종 개입 강도 (`none`, `soft`, `strong`)
-- `gv`: Gaze Variance
-- `fd`: Fixation Duration
-- `br`: Blink Rate
-- `timestamp`: 현재 YouTube 재생 시간(초)
-- `video_duration_sec`: 현재 영상의 전체 길이(초)
-- `cooldown_ms`: 프론트가 적용한 쿨다운 값. 백엔드는 제어에 사용하지 않고 리포트용으로 저장
+백엔드는 `intensity`를 다시 계산하지 않고 AI-1이 결정한 값을 사용합니다.
+`cooldown_ms` 역시 기록용이며 실제 cooldown 제어는 프론트가 담당합니다.
 
-AI-2는 `cls_score`로 강도를 다시 계산하거나 쿨다운으로 요청을 차단하지 않습니다. 프론트가 확정해 보낸 `intensity`에 즉시 반응하고, `timestamp`는 자막 선택에 사용합니다. 모든 Attention 입력과 처리 결과는 현재 세션 메모리에 리포트용 이벤트로 저장합니다.
+### 프론트 처리 규칙
 
-### 3. strong 미션 생성 및 저장
-
-`POST /sessions/{session_id}/nudge`에 `intensity: "strong"`을 보내면 백엔드는 다음 작업을 수행합니다.
-
-```text
-timestamp 주변 자막 선택
-→ Gemini 티어별 질문 생성
-→ mission_id 발급
-→ 정답·expected_keywords를 세션 메모리에 저장
-→ 정답을 제외한 질문만 프론트에 반환
-```
+| 응답 | `pause_video` | 프론트 처리 |
+|---|---:|---|
+| `none` | `false` | 아무 Nudge도 표시하지 않음 |
+| `soft` | `false` | Lumi 안내 UI 표시 |
+| `strong` | `true` | 영상 정지 후 `question` 표시 |
 
 strong 응답 예시:
 
@@ -188,48 +203,39 @@ strong 응답 예시:
   "intensity": "strong",
   "cls_score": 0.8,
   "child_tier": "tier2",
-  "timestamp": 35,
+  "timestamp": 35.2,
   "pause_video": true,
   "source": "mission_queue",
   "question": {
-    "mission_id": "22f0ceea9dea484db45b04ae4d6be1c7",
+    "mission_id": "mission-id",
     "type": "choice",
-    "text": "방이 무슨 색으로 변했을까요?",
-    "choices": ["파란색", "노란색"]
+    "text": "방의 온도를 바꾼 것은 무엇일까요?",
+    "choices": ["노란색 버튼", "파란색 공"]
   },
   "context_source": "current",
-  "scene_summary": "방이 파란색으로 변하는 장면",
-  "attention": {
-    "gv": 0.1,
-    "fd": 5.0,
-    "br": 2
-  }
+  "scene_summary": "방의 온도가 바뀌는 장면",
+  "attention": {"gv": 0.1, "fd": 5.0, "br": 2}
 }
 ```
 
-프론트는 `question.mission_id`를 보관하고 이후 답변 API의 URL에 사용해야 합니다.
-
-현재 저장 위치는 `storage/memory.py`의 메모리 딕셔너리입니다. 서버가 재시작되면 세션·미션·답변 이력이 모두 사라집니다. 정답과 `expected_keywords`는 프론트 응답에 노출하지 않습니다.
-
-### 4. JSON 미션 답변 전송
-
-선택형, 제스처, Web Speech transcript는 다음 API로 보냅니다.
+## 4. 미션 응답
 
 ```http
 POST /sessions/{session_id}/missions/{mission_id}/responses
+Content-Type: application/json
 ```
 
-선택형 답변:
+선택형:
 
 ```json
 {
   "response_type": "choice",
-  "answer": "파란색",
+  "answer": "노란색 버튼",
   "response_time_ms": 2800
 }
 ```
 
-Web Speech 음성 답변:
+Web Speech 음성 응답:
 
 ```json
 {
@@ -241,7 +247,7 @@ Web Speech 음성 답변:
 }
 ```
 
-제스처 답변:
+제스처:
 
 ```json
 {
@@ -251,268 +257,52 @@ Web Speech 음성 답변:
 }
 ```
 
-공통 응답 예시:
+응답의 `reaction`은 `praise`, `hint`, `retry` 중 하나입니다. 프론트는
+`resume_video`가 `true`일 때만 영상을 다시 재생합니다.
 
-```json
-{
-  "mission_id": "미션 ID",
-  "response_type": "voice",
-  "is_correct": true,
-  "csr_score": 0.923,
-  "csr_method": "semantic_embedding",
-  "plr_seconds": 3.4,
-  "reaction": "praise",
-  "feedback_text": "영상 내용을 정말 잘 기억했어!",
-  "resume_video": true,
-  "needs_retry": false,
-  "needs_stt_fallback": false,
-  "transcript": "방이 파란색으로 변했어요",
-  "stt_source": "web_speech"
-}
-```
-
-판정 및 상태 규칙:
-
-| 상황 | reaction | 미션 상태 | 영상 |
-|---|---|---|---|
-| 선택형 정답 | `praise` | 완료 | 재개 |
-| 선택형 오답 | `hint` | 재답변 가능 | 정지 유지 |
-| 음성 CSR `0.65` 이상 | `praise` | 완료 | 재개 |
-| 음성 CSR `0.65` 미만 | `hint` | 재답변 가능 | 정지 유지 |
-| Web Speech 결과 없음/낮은 신뢰도 | `retry` | 오디오 fallback 가능 | 정지 유지 |
-| 제스처 완료 | `praise` | 완료 | 재개 |
-| 제스처 미완료 | `retry` | 재답변 가능 | 정지 유지 |
-
-- `praise`일 때만 `answered: true`, `status: completed`로 저장합니다.
-- `hint`와 `retry`는 `status: awaiting_retry`로 유지해 같은 미션에 다시 답할 수 있습니다.
-- 각 답변의 요청과 평가 결과는 미션의 `responses` 배열에 누적합니다.
-- 완료된 미션에 다시 답하면 `409`를 반환합니다.
-- `response_time_ms`는 프론트가 측정해 보내며 백엔드는 `plr_seconds`로 변환합니다.
-- 음성 답변은 `gemini-embedding-001` Sentence Embedding의 cosine similarity로 CSR을 계산합니다.
-- 임베딩 API가 실패하면 기존 키워드 포함 비율 방식으로 자동 fallback합니다.
-- 응답의 `csr_method`는 `semantic_embedding` 또는 `keyword_fallback`입니다.
-- transcript가 비었거나 confidence가 `0.6` 미만이면 `needs_stt_fallback: true`를 반환합니다.
-
-### 5. Gemini 오디오 전사 fallback
-
-Web Speech가 transcript를 만들지 못했거나 confidence가 낮으면 프론트는 녹음 파일을 전송합니다.
+## 5. 음성 fallback
 
 ```http
 POST /sessions/{session_id}/missions/{mission_id}/responses/audio
 Content-Type: multipart/form-data
 ```
 
-multipart 필드:
-
-```text
-audio              webm, wav, mp3, m4a 등 오디오 파일
-response_time_ms   답변 시간(ms)
-language           ko (기본값)
-```
-
-처리 흐름:
-
-```text
-오디오 파일 검증
-→ gemini-2.5-flash 오디오 전사
-→ transcript 생성
-→ gemini-embedding-001 Semantic CSR
-→ praise 또는 hint 반환
-```
-
-실제 검증된 응답:
-
-```json
-{
-  "mission_id": "22f0ceea9dea484db45b04ae4d6be1c7",
-  "response_type": "voice",
-  "is_correct": true,
-  "csr_score": 0.923,
-  "csr_method": "semantic_embedding",
-  "plr_seconds": 2.5,
-  "reaction": "praise",
-  "feedback_text": "영상 내용을 정말 잘 기억했어!",
-  "resume_video": true,
-  "needs_retry": false,
-  "needs_stt_fallback": false,
-  "transcript": "방이 파란색으로 변했어요",
-  "stt_source": "gemini_audio"
-}
-```
-
-- 허용 확장자: `flac`, `m4a`, `mp3`, `mp4`, `mpeg`, `mpga`, `ogg`, `wav`, `webm`
-- 앱 업로드 제한: 10MB
-- 오디오가 비었거나 형식이 잘못되면 `400`
-- Gemini 전사에 실패하면 `502`
-
-### 6. 프론트 음성 처리 흐름
-
-```text
-아이 답변
-   ↓
-Web Speech 성공?
-   ├─ YES
-   │   → /responses에 transcript JSON 전송
-   │   → Semantic CSR
-   │
-   └─ NO
-       → /responses에서 needs_stt_fallback: true 확인
-       → /responses/audio에 녹음 파일 전송
-       → Gemini 오디오 전사
-       → Semantic CSR
-```
-
-### 7. 공통 오류
-
-| 상태 코드 | 의미 |
+| 필드 | 설명 |
 |---|---|
-| `400` | 잘못된 오디오 형식, 빈 파일, 10MB 초과 |
-| `404` | 세션 또는 미션을 찾을 수 없음 |
-| `409` | 이미 `praise`로 완료된 미션 |
-| `422` | 요청 필드 누락 또는 잘못된 데이터 형식 |
-| `502` | Gemini 미션 생성·전사 등 외부 AI 호출 실패 |
+| `audio` | webm, wav, mp3, m4a 등, 최대 10MB |
+| `response_time_ms` | 질문 표시 후 응답까지 밀리초 |
+| `language` | 기본값 `ko` |
 
-## 프론트 응답 계약
+일반 응답 API에서 `needs_stt_fallback: true`가 반환될 때 사용합니다.
 
-응답 형식은 `ai/nudge/schemas.py`의 `NudgeResponse`입니다.
+## 오류 코드
 
-### none: 개입 없음
+| 코드 | 의미 | 프론트 처리 |
+|---:|---|---|
+| `400` | 잘못된 음성 파일 | 다시 녹음 안내 |
+| `404` | 온보딩, 세션 또는 미션 없음 | 세션 재생성 또는 화면 종료 |
+| `409` | 이미 완료된 미션 | 중복 제출 중단 |
+| `422` | 요청 필드 또는 형식 오류 | 요청 생성 코드 확인 |
+| `502` | Gemini 질문 생성 또는 전사 실패 | 재시도 UI 또는 일반 Nudge fallback |
 
-```json
-{
-  "should_nudge": false,
-  "intensity": "none",
-  "cls_score": 0.3,
-  "child_tier": "tier2",
-  "timestamp": 5,
-  "pause_video": false,
-  "source": "no_trigger",
-  "question": null,
-  "attention": {
-    "gv": 0.5,
-    "fd": 1.2,
-    "br": 10
-  }
-}
-```
+## 저장 구조
 
-### soft: 루미만 표시
+- `onboarding_records`: 아동 온보딩과 tier
+- `viewing_sessions`: 영상 세션, 자막, baseline
+- `attention_events`: AI-1 입력 및 Nudge 처리 결과
+- `missions`: 생성 질문, 정답, 응답 이력 및 상태
 
-```json
-{
-  "should_nudge": true,
-  "intensity": "soft",
-  "cls_score": 0.6,
-  "child_tier": "tier2",
-  "timestamp": 22,
-  "pause_video": false,
-  "source": "soft_lumi",
-  "question": null,
-  "attention": {
-    "gv": 0.2,
-    "fd": 3.0,
-    "br": 5
-  }
-}
-```
-
-### strong: 영상 정지 및 질문 표시
-
-```json
-{
-  "should_nudge": true,
-  "intensity": "strong",
-  "cls_score": 0.8,
-  "child_tier": "tier2",
-  "timestamp": 35,
-  "pause_video": true,
-  "source": "mission_queue",
-  "question": {
-    "mission_id": "22f0ceea9dea484db45b04ae4d6be1c7",
-    "type": "choice",
-    "text": "방이 무슨 색으로 변했을까요?",
-    "choices": ["파란색", "노란색"]
-  },
-  "context_source": "current",
-  "scene_summary": "노란 버튼을 누르자 방이 차가운 파란색으로 변하는 장면",
-  "attention": {
-    "gv": 0.1,
-    "fd": 5.0,
-    "br": 2
-  }
-}
-```
-
-프론트 처리 기준:
-
-- `should_nudge`: Nudge UI 표시 여부
-- `pause_video`: YouTube 영상 정지 여부
-- `question.type`: `gesture`, `choice`, `open_question` 등 UI 유형
-- `question.text`: 표시할 질문
-- `question.choices`: 선택형 질문의 보기
-- `source`: `no_trigger`, `soft_lumi`, `mission_queue`, `fallback`
-
-Gemini가 생성한 정답과 평가 기준은 프론트 응답에 노출하지 않습니다.
-
-## 쿨다운과 Attention 기록
-
-- 쿨다운은 프론트에서 관리합니다.
-- 백엔드는 전달받은 `none`, `soft`, `strong`에 즉시 반응합니다.
-- `cooldown_ms`는 프론트에서 적용한 값을 리포트용으로 기록할 뿐, 요청 차단에는 사용하지 않습니다.
-- 각 요청의 CLS 지표, 영상 시점, 영상 길이, 쿨다운 값, 미션 ID와 처리 결과를 세션의 `attention_events`에 저장합니다.
-
-현재 저장소는 메모리 기반이므로 서버를 재시작하면 세션과 Attention 이벤트가 사라집니다. 저장 함수는 추후 DB 저장소로 교체할 수 있도록 분리되어 있습니다.
+프로세스 캐시는 반복 조회 최적화용이며 DB가 원본입니다. 서버가 재시작되어도 DB에서
+세션과 미션을 복원할 수 있습니다.
 
 ## 테스트
 
-자동 통합 테스트:
-
 ```powershell
 python -m tests.ai.nudge.test_pinkfong_attention_flow
+python -m tests.ai.nudge.test_mission_response_flow
+python -m tests.ai.nudge.test_audio_transcription_service
+python -m tests.ai.nudge.test_semantic_csr
+python -m tests.ai.nudge.test_database_storage
 ```
 
-검증 항목:
-
-1. `subtitle_pinkfong.json` 로드
-2. 연속 `none → soft → strong` 입력
-3. 서버 쿨다운 없이 연속 strong 요청 즉시 처리
-4. timestamp 35초 자막 맥락 선택
-5. Tier 2 선택형 질문 생성
-6. `NudgeResponse` 출력 형식 검증
-
-자동 테스트는 비용과 응답 변동을 피하기 위해 Gemini만 가짜 함수로 대체합니다. 실제 Gemini는 Swagger의 `POST /sessions/{session_id}/nudge` strong 요청으로 검증했으며, 자막에 맞는 선택형 질문이 정상적으로 반환됩니다.
-
-성공 메시지:
-
-```text
-PASS: pinkfong subtitles + continuous CLS + immediate question output
-```
-
-## 주요 파일
-
-```text
-main.py                                       FastAPI 앱 설정 및 router 등록
-mock_data/subtitle_pinkfong.json              핑크퐁 mock 자막
-mock_data/subtitle_pororo.json                뽀로로 mock 자막
-ai/attention/schemas.py                       AI-1 입력 스키마
-ai/nudge/router.py                            세션·Nudge·답변 HTTP API
-ai/nudge/caption_slicer.py                    timestamp 기반 자막 선택
-ai/nudge/mission_generator.py                 Gemini 질문 생성
-ai/nudge/audio_transcription_service.py       Gemini 오디오 전사
-ai/nudge/nudge_trigger.py                     intensity별 응답 생성
-ai/nudge/nudge_service.py                     intensity·자막·질문 통합
-ai/nudge/response_service.py                  선택·음성·제스처 답변 평가
-ai/nudge/schemas.py                           API 요청 및 프론트 출력 스키마
-storage/memory.py                             MVP용 세션·미션·Attention 이벤트 저장소
-tests/ai/nudge/test_pinkfong_attention_flow.py 자동 통합 테스트
-tests/ai/nudge/test_mission_response_flow.py   미션 저장·답변 API 통합 테스트
-tests/ai/nudge/test_audio_transcription_service.py Gemini 오디오 전사 테스트
-```
-
-## 다음 연결 단계
-
-1. Dev가 실제 YouTube 자막을 확보하는 방식 확정
-2. mock `subtitle_name`을 실제 captions 입력 또는 자막 추출기로 교체
-3. AI-1이 세션 ID와 함께 `ClsPayload`를 실시간 전송
-4. 프론트가 `NudgeResponse`에 따라 루미, 영상 및 질문 UI 제어
-5. 메모리 Attention 이벤트 저장을 PostgreSQL 저장소로 교체
+테스트는 `SESSION_STORAGE=memory`를 사용하고 Gemini 호출은 mock으로 대체합니다.
