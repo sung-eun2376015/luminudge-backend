@@ -1,42 +1,35 @@
 # Attention Module (AI-1)
 
-프론트엔드(브라우저)에서 MediaPipe로 계산한 CLS(Cognitive Load Score) 값을
-백엔드가 받아서 검증하는 모듈입니다.
-
-## 담당 범위
-- 실시간 CLS 계산(GV/FD/BR, MediaPipe)은 **프론트엔드**에서 처리합니다
-  (No-Capture Privacy 원칙에 따라 영상 프레임은 서버로 전송하지 않습니다).
-- 이 모듈은 프론트에서 넘어온 CLS 결과값을 받는 API 엔드포인트만 제공합니다.
+프론트엔드의 AI-1이 계산한 CLS(Cognitive Load Score) 결과를 백엔드에서
+검증하기 위한 공통 입력 스키마를 제공합니다.
 
 ## 파일 구성
-- `schemas.py` — 프론트→백엔드로 전달되는 CLS payload의 pydantic 검증 모델
-- `router.py` — `/attention/cls` 엔드포인트 정의
 
-## 사용 방법 (main.py에 연결 필요)
-```python
-from ai.attention.router import router as attention_router
-app.include_router(attention_router)
+- `schemas.py`: 프론트엔드에서 백엔드로 전달하는 `ClsPayload` Pydantic 모델
+
+## API 연결
+
+Attention 결과는 세션 문맥과 함께 다음 API로 전송합니다.
+
+```http
+POST /sessions/{session_id}/nudge
 ```
 
-## 엔드포인트
+이 엔드포인트는 `ClsPayload`를 검증하고 Attention 이벤트를 저장한 다음,
+`none`, `soft`, `strong` 강도에 따라 Nudge 응답을 생성합니다.
 
-### POST /attention/cls
-프론트엔드에서 CLS 이벤트(쿨다운 통과한 실제 nudge 트리거)를 받습니다.
-
-**요청 예시:**
 ```json
 {
-  "cls_score": 0.62,
-  "intensity": "soft",
-  "gv": 0.00012,
-  "fd": 3200,
-  "br": 4,
-  "timestamp": 1731234567890
+  "cls_score": 0.8,
+  "intensity": "strong",
+  "gv": 0.1,
+  "fd": 5.0,
+  "br": 2,
+  "timestamp": 35.2,
+  "video_duration_sec": 300,
+  "cooldown_ms": 10000
 }
 ```
 
-## 현재 상태 (2026-07 기준)
-- [x] CLS payload 스키마 정의
-- [x] 엔드포인트 스켈레톤 (검증 + echo만, 실제 저장/미션 연동 로직 없음)
-- [ ] main.py 연결 (Dev 담당)
-- [ ] nudge_trigger.py(AI-2)와의 실제 파이프라인 연결 — 4주차 통합 예정
+기존의 `POST /attention/cls` 수신 전용 엔드포인트는 Nudge 파이프라인과
+연결되지 않는 중복 경로였으므로 제거되었습니다.

@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from ai.attention.router import router as attention_router
 from ai.nudge.router import router as nudge_router
 from ai.nudge.nudge_trigger import classify_child_tier
 from storage.onboarding import (
@@ -24,7 +23,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(attention_router)
 app.include_router(nudge_router)
 
 @app.on_event("startup")
