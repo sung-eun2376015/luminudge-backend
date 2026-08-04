@@ -32,8 +32,9 @@ SESSION_STORAGE=database
 - `SESSION_STORAGE=database`: 운영 기본값. 세션, Attention 이벤트, 미션을 DB에 저장합니다.
 - `SESSION_STORAGE=memory`: 외부 DB 없이 실행하는 테스트 전용 모드입니다.
 
-DB에는 `migrations/001_onboarding_child_tier.sql`과
-`migrations/002_session_mission_storage.sql`을 순서대로 적용합니다. 앱 시작 시
+DB에는 `migrations/001_onboarding_child_tier.sql`,
+`migrations/002_session_mission_storage.sql`,
+`migrations/003_onboarding_plr_nullable.sql`을 순서대로 적용합니다. 앱 시작 시
 SQLModel의 `create_all`도 실행되지만 기존 테이블 변경은 migration을 기준으로 관리합니다.
 
 ## 전체 프론트 연동 흐름
@@ -100,10 +101,12 @@ Content-Type: application/json
   "baselineGV": 0.25,
   "baselineFD": 1.2,
   "baselineBR": 15,
-  "plr": 2.8,
+  "plr": null,
   "completedAt": "2026-08-01T12:00:00+09:00"
 }
 ```
+
+`plr`은 프론트에서 아직 측정하지 못한 경우 `null`로 전달할 수 있습니다.
 
 ```json
 {

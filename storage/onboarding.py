@@ -17,7 +17,7 @@ class OnboardingRecord(BaseModel):
     baselineGV: float
     baselineFD: float
     baselineBR: float
-    plr: float
+    plr: float | None = None
     completedAt: str
 
 
@@ -32,7 +32,7 @@ class OnboardingRecordDB(SQLModel, table=True):
     baselineGV: float
     baselineFD: float
     baselineBR: float
-    plr: float
+    plr: Optional[float] = None
     completedAt: str
     childTier: str
 

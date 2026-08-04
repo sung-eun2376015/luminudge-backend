@@ -45,7 +45,7 @@ def test_onboarding_returns_id_and_computed_tier() -> None:
                 "baselineGV": 0.25,
                 "baselineFD": 1.2,
                 "baselineBR": 15,
-                "plr": 2.8,
+                "plr": None,
                 "completedAt": "2026-08-01T12:00:00+09:00",
             },
         )
