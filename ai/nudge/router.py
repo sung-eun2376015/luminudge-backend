@@ -240,7 +240,10 @@ def create_nudge(session_id: str, payload: ClsPayload) -> dict[str, Any]:
     description=(
         "choice, voice(Web Speech transcript), gesture 응답을 평가합니다. "
         "response_time_ms는 질문 표시부터 응답 완료까지의 밀리초입니다. "
-        "resume_video가 true일 때만 프론트가 영상을 재생합니다."
+        "Tier별 권장 매핑은 tier1=gesture, tier2=choice, tier3=voice입니다. "
+        "praise는 미션 완료와 영상 재생, hint/retry는 같은 mission_id 재시도를 뜻합니다. "
+        "resume_video가 true일 때만 프론트가 영상을 재생합니다. "
+        "voice에서 needs_stt_fallback이 true이면 /responses/audio를 호출합니다."
     ),
     responses={
         **COMMON_ERROR_RESPONSES,

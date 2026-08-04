@@ -164,14 +164,27 @@ class MissionResponseRequest(BaseModel):
 class MissionResponseResult(BaseModel):
     mission_id: str
     response_type: Literal["choice", "voice", "gesture"]
-    is_correct: bool
-    csr_score: float | None = Field(default=None, ge=0.0, le=1.0)
-    csr_method: Literal["semantic_embedding", "keyword_fallback"] | None = None
-    plr_seconds: float = Field(ge=0.0)
-    reaction: Literal["praise", "hint", "retry"]
-    feedback_text: str
-    resume_video: bool
-    needs_retry: bool
-    needs_stt_fallback: bool = False
+    is_correct: bool = Field(description="미션 평가 성공 여부")
+    csr_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="음성 응답의 Contextual Similarity Ratio. choice와 gesture는 null",
+    )
+    csr_method: Literal["semantic_embedding", "keyword_fallback"] | None = Field(
+        default=None,
+        description="음성 CSR 평가 방식. choice와 gesture는 null",
+    )
+    plr_seconds: float = Field(ge=0.0, description="밀리초 요청값을 초로 변환한 응답 시간")
+    reaction: Literal["praise", "hint", "retry"] = Field(
+        description="praise는 완료, hint/retry는 같은 미션 재시도"
+    )
+    feedback_text: str = Field(description="프론트가 표시하거나 읽어 줄 피드백 문구")
+    resume_video: bool = Field(description="true일 때만 미션 UI를 닫고 영상을 다시 재생")
+    needs_retry: bool = Field(description="true이면 같은 mission_id로 응답을 다시 제출")
+    needs_stt_fallback: bool = Field(
+        default=False,
+        description="true이면 Web Speech 대신 /responses/audio로 녹음 음성을 제출",
+    )
     transcript: str | None = None
     stt_source: Literal["web_speech", "gemini_audio", "whisper", "mock"] | None = None

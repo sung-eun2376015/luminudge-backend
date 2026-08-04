@@ -266,6 +266,66 @@ Web Speech 음성 응답:
 응답의 `reaction`은 `praise`, `hint`, `retry` 중 하나입니다. 프론트는
 `resume_video`가 `true`일 때만 영상을 다시 재생합니다.
 
+### Tier별 미션과 응답 처리 규칙
+
+미션 생성 시 아동의 `child_tier`에 따라 아래 유형을 선택합니다. `question.type`은
+Nudge 응답에 포함되는 미션 유형이고, `response_type`은 미션 응답 API에 제출할 값입니다.
+
+| `child_tier` | `question.type` | 화면 구성 | 제출 `response_type` | 필수 응답 필드 |
+|---|---|---|---|---|
+| `tier1` | `gesture` | 동작 따라 하기 또는 간단한 지시 수행 | `gesture` | `completed` |
+| `tier2` | `choice` | 두 개의 선택지 중 하나 선택 | `choice` | `answer` |
+| `tier3` | `open_question` | 짧게 말로 답하는 질문 | `voice` | `transcript` |
+
+`question.type=open_question`을 제출할 때는 `response_type=voice`를 사용합니다. 현재
+백엔드는 미션의 `question.type`과 제출한 `response_type`의 일치 여부를 별도로 검증하지
+않으므로, 프론트가 위 매핑을 지켜야 합니다.
+
+### 응답 유형별 평가 결과
+
+| 응답 유형 | 성공 조건 | 성공 시 | 실패 시 |
+|---|---|---|---|
+| `choice` | 객관식 정답과 `answer`가 일치. 정답이 `없음`인 주관 선택형은 비어 있지 않은 응답이면 성공 | `praise`, `is_correct=true` | `hint`, `is_correct=false` |
+| `gesture` | `completed=true` | `praise`, `is_correct=true` | `retry`, `is_correct=false` |
+| `voice` | 의미 기반 CSR 점수가 `0.65` 이상 | `praise`, `is_correct=true` | 점수가 기준 미만이면 `hint`; Web Speech 품질이 낮으면 `retry`와 STT fallback 요청 |
+
+모든 `praise` 결과는 미션을 완료하고 영상을 재생합니다. `hint`와 `retry` 결과는
+같은 미션을 다시 시도하게 하며 영상을 정지 상태로 유지합니다.
+
+| `reaction` | `needs_retry` | `resume_video` | 저장되는 미션 상태 | 프론트 처리 |
+|---|---:|---:|---|---|
+| `praise` | `false` | `true` | `completed` (`answered=true`) | 성공 피드백을 보여준 뒤 영상 재생 |
+| `hint` | `true` | `false` | `awaiting_retry` (`answered=false`) | 힌트 피드백을 보여주고 같은 미션 재응답 허용 |
+| `retry` | `true` | `false` | `awaiting_retry` (`answered=false`) | 다시 시도 안내 후 같은 미션 재응답 허용 |
+
+완료된 미션에 다시 응답하면 `409`가 반환됩니다. `awaiting_retry` 상태에는 현재
+재시도 횟수 제한이 없으므로 성공하기 전까지 같은 `mission_id`로 다시 제출할 수 있습니다.
+
+### 음성 응답 분기
+
+1. Web Speech 결과를 `response_type=voice`로 제출합니다.
+2. `needs_stt_fallback=true`이면 영상 정지를 유지하고 녹음한 음성을
+   `/responses/audio`로 제출합니다.
+3. `needs_stt_fallback=false`이고 `needs_retry=true`이면 힌트를 표시한 뒤 Web Speech로
+   다시 답하게 합니다.
+4. `resume_video=true`이면 미션 UI를 닫고 영상을 재생합니다.
+
+프론트에서는 개별 `reaction`만 추론하기보다 응답의 제어 필드를 기준으로 처리하는 것을
+권장합니다.
+
+```ts
+showFeedback(result.feedback_text);
+
+if (result.needs_stt_fallback) {
+  await submitRecordedAudio();
+} else if (result.needs_retry) {
+  enableRetry();
+} else if (result.resume_video) {
+  closeMission();
+  resumeVideo();
+}
+```
+
 ## 5. 음성 fallback
 
 ```http
