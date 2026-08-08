@@ -11,3 +11,6 @@ data/
 
 # local-only Claude Code context pointer
 CLAUDE.md
+
+# Local AI-assistant context (not for git)
+docs/
